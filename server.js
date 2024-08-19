@@ -12,7 +12,7 @@ if (missingVars.length > 0) {
 
 const express = require('express');
 const { Client, GatewayIntentBits, AttachmentBuilder, ChannelType } = require('discord.js');
-const multer = require('multer');
+const busboy = require('busboy');
 const fs = require('fs-extra');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
@@ -37,12 +37,13 @@ https.globalAgent = new https.Agent({ keepAlive: true });
 
 const app = express();
 const PORT = process.env.PORT || 5050;
-const tempPath = path.join(__dirname, 'temp/');
-fs.ensureDirSync(tempPath);
 
 const CHUNK_SIZE = 8 * 1024 * 1024; // 8MB chunks (safe for Discord 25MB limit)
 const BCRYPT_ROUNDS = 10;
 const JWT_EXPIRY = '7d';
+const MAX_PARALLEL_UPLOADS = 5; // Number of files to upload in parallel
+const MAX_RETRIES = 3; // Number of retries per chunk
+const RETRY_DELAY_BASE = 1000; // Base delay for exponential backoff (ms)
 
 // ============================================================================
 // LOGGING SETUP
@@ -67,6 +68,9 @@ logger.add(new winston.transports.Console({
         winston.format.simple()
     )
 }));
+
+// Ensure logs directory exists
+fs.ensureDirSync(path.join(__dirname, 'logs'));
 
 // ============================================================================
 // DISCORD CLIENT SETUP
@@ -99,11 +103,6 @@ app.use(helmet({
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-const upload = multer({
-    dest: tempPath,
-    limits: { fileSize: 20 * 1024 * 1024 * 1024 }, // 20GB
-});
-
 // ============================================================================
 // UTILITY FUNCTIONS
 // ============================================================================
@@ -124,14 +123,12 @@ function generateUniqueId() {
     return `${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 }
 
-function calculateFileHash(filePath) {
-    return new Promise((resolve, reject) => {
-        const hash = crypto.createHash('sha256');
-        const stream = fs.createReadStream(filePath);
-        stream.on('data', data => hash.update(data));
-        stream.on('end', () => resolve(hash.digest('hex')));
-        stream.on('error', reject);
-    });
+function calculateBufferHash(buffer) {
+    return crypto.createHash('sha256').update(buffer).digest('hex');
+}
+
+async function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 // ============================================================================
@@ -183,7 +180,7 @@ async function getUserEnv(username) {
     };
 
     const env = {
-        dataId: await getChan('storage'), // Single storage channel
+        dataId: await getChan('storage'),
         metaId: await getChan('metadata'),
         state: { files: [], folders: [] }
     };
@@ -232,60 +229,79 @@ async function fetchDirectory(username) {
 }
 
 // ============================================================================
-// FILE PROCESSING (SEQUENTIAL)
+// CHUNK UPLOAD WITH RETRY
 // ============================================================================
 
-async function uploadFileToDiscord(username, file, targetPath) {
-    const env = userRegistry[username];
-    const channel = await client.channels.fetch(env.dataId);
+async function uploadChunkWithRetry(channel, buffer, fileId, chunkIndex, totalParts) {
+    let lastError = null;
 
-    const stats = await fs.stat(file.path);
-    const totalParts = Math.ceil(stats.size / CHUNK_SIZE);
-    const fileId = generateUniqueId();
-    const messageIds = [];
-
-    logger.info(`[Upload] Starting ${file.originalname} (${(stats.size / 1024 / 1024).toFixed(2)}MB) - ${totalParts} chunks`);
-
-    const fd = await fs.open(file.path, 'r');
-    const uploadStart = Date.now();
-
-    try {
-        for (let i = 0; i < totalParts; i++) {
-            const chunkStart = Date.now();
-            const buffer = Buffer.alloc(CHUNK_SIZE);
-            const { bytesRead } = await fs.read(fd, buffer, 0, CHUNK_SIZE, i * CHUNK_SIZE);
-
-            const attachment = new AttachmentBuilder(
-                buffer.subarray(0, bytesRead),
-                { name: `part_${i}.bin` }
-            );
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        try {
+            const attachment = new AttachmentBuilder(buffer, { name: `part_${chunkIndex}.bin` });
 
             const msg = await channel.send({
-                content: `DATA | ${fileId} | Chunk ${i}/${totalParts}`,
+                content: `DATA | ${fileId} | Chunk ${chunkIndex}/${totalParts}`,
                 files: [attachment]
             });
 
-            const chunkTime = Date.now() - chunkStart;
-            const speed = (bytesRead / 1024 / 1024) / (chunkTime / 1000);
+            return msg.id;
+        } catch (error) {
+            lastError = error;
+            logger.warn(`Chunk ${chunkIndex}/${totalParts} failed (attempt ${attempt}/${MAX_RETRIES}): ${error.message}`);
 
-            messageIds.push(msg.id);
-            logger.info(`[Debug-Net] Chunk ${i + 1}/${totalParts} sent in ${chunkTime}ms (${speed.toFixed(2)} MB/s)`);
+            if (attempt < MAX_RETRIES) {
+                const delay = RETRY_DELAY_BASE * Math.pow(2, attempt - 1);
+                logger.info(`Retrying in ${delay}ms...`);
+                await sleep(delay);
+            }
         }
-    } finally {
-        await fs.close(fd);
+    }
+
+    throw new Error(`Failed to upload chunk ${chunkIndex} after ${MAX_RETRIES} attempts: ${lastError?.message}`);
+}
+
+// ============================================================================
+// STREAMING FILE UPLOAD (NO LOCAL STORAGE)
+// ============================================================================
+
+async function uploadBufferToDiscord(username, fileBuffer, fileName, targetPath) {
+    const env = userRegistry[username];
+    const channel = await client.channels.fetch(env.dataId);
+
+    const fileSize = fileBuffer.length;
+    const totalParts = Math.ceil(fileSize / CHUNK_SIZE);
+    const fileId = generateUniqueId();
+    const messageIds = [];
+    const fileHash = calculateBufferHash(fileBuffer);
+
+    logger.info(`[Upload] Starting ${fileName} (${(fileSize / 1024 / 1024).toFixed(2)}MB) - ${totalParts} chunks`);
+
+    const uploadStart = Date.now();
+
+    for (let i = 0; i < totalParts; i++) {
+        const chunkStart = Date.now();
+        const start = i * CHUNK_SIZE;
+        const end = Math.min(start + CHUNK_SIZE, fileSize);
+        const chunkBuffer = fileBuffer.subarray(start, end);
+
+        const msgId = await uploadChunkWithRetry(channel, chunkBuffer, fileId, i, totalParts);
+        messageIds.push(msgId);
+
+        const chunkTime = Date.now() - chunkStart;
+        const speed = (chunkBuffer.length / 1024 / 1024) / (chunkTime / 1000);
+        logger.info(`[Upload] Chunk ${i + 1}/${totalParts} sent in ${chunkTime}ms (${speed.toFixed(2)} MB/s)`);
     }
 
     const totalTime = (Date.now() - uploadStart) / 1000;
-    const avgSpeed = (stats.size / 1024 / 1024) / totalTime;
-    logger.info(`[Debug-Net] Upload complete: ${file.originalname} in ${totalTime.toFixed(2)}s (~${avgSpeed.toFixed(2)} MB/s)`);
+    const avgSpeed = (fileSize / 1024 / 1024) / totalTime;
+    logger.info(`[Upload] Complete: ${fileName} in ${totalTime.toFixed(2)}s (~${avgSpeed.toFixed(2)} MB/s)`);
 
-    // Update state
     const fileEntry = {
         id: fileId,
-        name: file.originalname,
+        name: fileName,
         path: targetPath,
-        size: stats.size,
-        hash: await calculateFileHash(file.path),
+        size: fileSize,
+        hash: fileHash,
         channelId: env.dataId,
         messageIds: messageIds,
         status: "FINISHED",
@@ -293,7 +309,6 @@ async function uploadFileToDiscord(username, file, targetPath) {
     };
 
     env.state.files.push(fileEntry);
-    await saveUserEnv(username);
 
     return fileEntry;
 }
@@ -324,20 +339,6 @@ const auth = async (req, res, next) => {
 app.get('/api/ping', async (req, res) => {
     const start = Date.now();
     try {
-        // Just fetch the gateway info as a lightweight test
-        await client.rest.get('/gateway');
-        const latency = Date.now() - start;
-        res.json({ latency });
-    } catch (e) {
-        res.status(500).json({ error: e.message, latency: Date.now() - start });
-    }
-});
-
-// Network Check
-app.get('/api/ping', async (req, res) => {
-    const start = Date.now();
-    try {
-        // Just fetch the gateway info as a lightweight test
         await client.rest.get('/gateway');
         const latency = Date.now() - start;
         res.json({ latency });
@@ -385,32 +386,185 @@ app.get('/api/sync', auth, (req, res) => {
     res.json({ files: req.userEnv.state.files, folders: req.userEnv.state.folders });
 });
 
-app.post('/api/upload', auth, upload.single('file'), async (req, res) => {
-    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+// ============================================================================
+// PARALLEL UPLOAD ENDPOINT (STREAMING - NO LOCAL STORAGE)
+// ============================================================================
 
-    try {
-        const fileHash = await calculateFileHash(req.file.path);
+app.post('/api/upload', auth, (req, res) => {
+    const username = req.username;
+    const userEnv = req.userEnv;
 
-        // Simple Deduplication
-        const existing = req.userEnv.state.files.find(f => f.hash === fileHash);
-        if (existing) {
-            const newEntry = { ...existing, id: generateUniqueId(), name: req.file.originalname, path: req.body.path, addedAt: new Date().toISOString() };
-            req.userEnv.state.files.push(newEntry);
-            await saveUserEnv(req.username);
-            await fs.remove(req.file.path);
-            return res.json({ success: true, deduplicated: true });
+    const bb = busboy({ headers: req.headers, limits: { fileSize: 20 * 1024 * 1024 * 1024 } });
+
+    let targetPath = '/';
+    const filePromises = [];
+
+    bb.on('field', (name, val) => {
+        if (name === 'path') targetPath = val;
+    });
+
+    bb.on('file', (name, file, info) => {
+        const { filename } = info;
+        const chunks = [];
+
+        file.on('data', (data) => {
+            chunks.push(data);
+        });
+
+        file.on('end', () => {
+            const fileBuffer = Buffer.concat(chunks);
+            const fileHash = calculateBufferHash(fileBuffer);
+
+            // Check for deduplication
+            const existing = userEnv.state.files.find(f => f.hash === fileHash);
+
+            if (existing) {
+                // Deduplicate - just add a reference
+                const newEntry = {
+                    ...existing,
+                    id: generateUniqueId(),
+                    name: filename,
+                    path: targetPath,
+                    isReference: true,
+                    addedAt: new Date().toISOString()
+                };
+                userEnv.state.files.push(newEntry);
+                logger.info(`[Dedup] ${filename} matched existing file`);
+                filePromises.push(Promise.resolve({ deduplicated: true, name: filename }));
+            } else {
+                // Upload to Discord
+                const uploadPromise = uploadBufferToDiscord(username, fileBuffer, filename, targetPath)
+                    .then(entry => ({ success: true, name: filename, entry }))
+                    .catch(err => {
+                        logger.error(`Upload failed for ${filename}:`, err);
+                        throw err;
+                    });
+
+                filePromises.push(uploadPromise);
+            }
+        });
+    });
+
+    bb.on('close', async () => {
+        try {
+            const results = await Promise.all(filePromises);
+            await saveUserEnv(username);
+
+            const dedupCount = results.filter(r => r.deduplicated).length;
+            const uploadCount = results.filter(r => r.success && !r.deduplicated).length;
+
+            res.json({
+                success: true,
+                uploaded: uploadCount,
+                deduplicated: dedupCount,
+                total: results.length
+            });
+        } catch (error) {
+            logger.error('Upload batch failed:', error);
+            res.status(500).json({ error: 'Upload failed: ' + error.message });
         }
+    });
 
-        // Upload to Discord (Synchronous)
-        await uploadFileToDiscord(req.username, req.file, req.body.path);
-        await fs.remove(req.file.path);
+    bb.on('error', (error) => {
+        logger.error('Busboy error:', error);
+        res.status(500).json({ error: 'Upload parsing failed' });
+    });
 
-        res.json({ success: true });
-    } catch (error) {
-        logger.error(`Upload failed for ${req.file.originalname}:`, error);
-        await fs.remove(req.file.path).catch(() => { });
-        res.status(500).json({ error: 'Upload failed' });
-    }
+    req.pipe(bb);
+});
+
+// ============================================================================
+// BATCH PARALLEL UPLOAD ENDPOINT
+// ============================================================================
+
+app.post('/api/upload-batch', auth, (req, res) => {
+    const username = req.username;
+    const userEnv = req.userEnv;
+
+    const bb = busboy({ headers: req.headers, limits: { fileSize: 20 * 1024 * 1024 * 1024 } });
+
+    let targetPath = '/';
+    const pendingFiles = [];
+
+    bb.on('field', (name, val) => {
+        if (name === 'path') targetPath = val;
+    });
+
+    bb.on('file', (name, file, info) => {
+        const { filename } = info;
+        const chunks = [];
+
+        file.on('data', (data) => {
+            chunks.push(data);
+        });
+
+        file.on('end', () => {
+            const fileBuffer = Buffer.concat(chunks);
+            pendingFiles.push({ filename, fileBuffer, targetPath });
+        });
+    });
+
+    bb.on('close', async () => {
+        try {
+            const results = [];
+            let dedupCount = 0;
+
+            // Process files in parallel batches
+            for (let i = 0; i < pendingFiles.length; i += MAX_PARALLEL_UPLOADS) {
+                const batch = pendingFiles.slice(i, i + MAX_PARALLEL_UPLOADS);
+
+                const batchPromises = batch.map(async ({ filename, fileBuffer, targetPath }) => {
+                    const fileHash = calculateBufferHash(fileBuffer);
+
+                    // Check deduplication
+                    const existing = userEnv.state.files.find(f => f.hash === fileHash);
+
+                    if (existing) {
+                        const newEntry = {
+                            ...existing,
+                            id: generateUniqueId(),
+                            name: filename,
+                            path: targetPath,
+                            isReference: true,
+                            addedAt: new Date().toISOString()
+                        };
+                        userEnv.state.files.push(newEntry);
+                        logger.info(`[Dedup] ${filename} matched existing file`);
+                        dedupCount++;
+                        return { deduplicated: true, name: filename };
+                    }
+
+                    // Upload with retry
+                    const entry = await uploadBufferToDiscord(username, fileBuffer, filename, targetPath);
+                    return { success: true, name: filename, entry };
+                });
+
+                const batchResults = await Promise.all(batchPromises);
+                results.push(...batchResults);
+
+                logger.info(`[Batch] Completed ${Math.min(i + MAX_PARALLEL_UPLOADS, pendingFiles.length)}/${pendingFiles.length} files`);
+            }
+
+            await saveUserEnv(username);
+
+            res.json({
+                success: true,
+                uploaded: results.filter(r => r.success && !r.deduplicated).length,
+                deduplicated: dedupCount,
+                total: results.length
+            });
+        } catch (error) {
+            logger.error('Batch upload failed:', error);
+            res.status(500).json({ error: 'Batch upload failed: ' + error.message });
+        }
+    });
+
+    bb.on('error', (error) => {
+        logger.error('Busboy error:', error);
+        res.status(500).json({ error: 'Upload parsing failed' });
+    });
+
+    req.pipe(bb);
 });
 
 app.post('/api/create-folder', auth, async (req, res) => {
@@ -424,19 +578,13 @@ app.delete('/api/item', auth, async (req, res) => {
     if (isFolder) {
         req.userEnv.state.folders = req.userEnv.state.folders.filter(f => f !== id);
     } else {
-        const file = req.userEnv.state.files.find(f => f.id === id);
-        if (file) {
-            // We don't delete from Discord to allow deduplication to keep working for others/same user
-            // But if we wanted to be strict, we could. For now, just remove from index.
-            req.userEnv.state.files = req.userEnv.state.files.filter(f => f.id !== id);
-        }
+        req.userEnv.state.files = req.userEnv.state.files.filter(f => f.id !== id);
     }
     await saveUserEnv(req.username);
     res.json({ success: true });
 });
 
 app.post('/api/nuke', auth, async (req, res) => {
-    // Simplified nuke - just clears index. Real nuke would delete messages too.
     req.userEnv.state = { files: [], folders: [] };
     await saveUserEnv(req.username);
     res.json({ success: true });

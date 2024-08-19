@@ -526,56 +526,105 @@
         // FILE OPERATIONS
         // ============================================================================
 
+        // Configuration
+        const MAX_PARALLEL_UPLOADS = 5;
+        const MAX_RETRIES = 3;
+        const RETRY_DELAY_BASE = 1000;
+
+        async function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        async function uploadFileWithRetry(file, targetPath, retryCount = 0) {
+            const fd = new FormData();
+            fd.append('file', file);
+            fd.append('path', targetPath);
+
+            try {
+                const res = await apiFetch('/api/upload', { method: 'POST', body: fd });
+                if (!res) throw new Error('No response from server');
+                return await res.json();
+            } catch (error) {
+                if (retryCount < MAX_RETRIES) {
+                    const delay = RETRY_DELAY_BASE * Math.pow(2, retryCount);
+                    console.warn(`[Retry] ${file.name} failed, retrying in ${delay}ms (attempt ${retryCount + 1}/${MAX_RETRIES})`);
+                    await sleep(delay);
+                    return uploadFileWithRetry(file, targetPath, retryCount + 1);
+                }
+                throw error;
+            }
+        }
+
         async function startUpload(files) {
             if (files.length === 0) return;
 
             const total = files.length;
-            let current = 0;
+            let completed = 0;
             let dedupCount = 0;
+            let failedFiles = [];
 
-            showNotification(`Starting upload of ${total} files...`, 'info');
+            showNotification(`🚀 Starting parallel upload of ${total} files...`, 'info');
+            const startTime = Date.now();
 
-            for (let f of files) {
-                current++;
-                const fd = new FormData();
-                fd.append('file', f);
-
-                const target = f.webkitRelativePath
+            // Prepare all files with their target paths
+            const fileQueue = Array.from(files).map(f => ({
+                file: f,
+                targetPath: f.webkitRelativePath
                     ? '/' + f.webkitRelativePath.split('/').slice(0, -1).join('/') + '/'
-                    : currentPath;
-                fd.append('path', target);
+                    : currentPath
+            }));
 
-                showNotification(`Uploading ${current}/${total}: ${f.name}...`, 'info');
-                const startTime = Date.now();
+            // Process in parallel batches
+            const uploadNextBatch = async () => {
+                const batch = [];
 
-                try {
-                    const res = await apiFetch('/api/upload', { method: 'POST', body: fd });
-
-                    const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-                    console.log(`[Debug] ${f.name} took ${duration}s`);
-
-                    if (!res) {
-                        throw new Error('Upload failed (no response)');
-                    }
-
-                    const data = await res.json();
-                    if (data.deduplicated) {
-                        console.log(`[Debug] ${f.name} was deduplicated (instant)`);
-                        dedupCount++;
-                    }
-
-                } catch (error) {
-                    const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-                    console.error(`Upload failed for ${f.name} after ${duration}s:`, error);
-                    showNotification(`❌ Error uploading ${f.name}. Stopping all uploads.`, 'error');
-                    return; // STOP EVERYTHING
+                while (batch.length < MAX_PARALLEL_UPLOADS && fileQueue.length > 0) {
+                    batch.push(fileQueue.shift());
                 }
-            }
 
-            if (dedupCount > 0) {
-                showNotification(`✓ Upload complete! (${dedupCount} deduplicated)`, 'success');
+                if (batch.length === 0) return;
+
+                const batchPromises = batch.map(async ({ file, targetPath }) => {
+                    try {
+                        const result = await uploadFileWithRetry(file, targetPath);
+                        completed++;
+
+                        if (result.deduplicated > 0) {
+                            dedupCount += result.deduplicated;
+                            console.log(`[Dedup] ${file.name} was deduplicated`);
+                        }
+
+                        // Update progress
+                        const percent = Math.round((completed / total) * 100);
+                        console.log(`[Progress] ${completed}/${total} (${percent}%) - ${file.name}`);
+
+                        return { success: true, name: file.name };
+                    } catch (error) {
+                        console.error(`[Failed] ${file.name}:`, error);
+                        failedFiles.push(file.name);
+                        return { success: false, name: file.name, error };
+                    }
+                });
+
+                await Promise.all(batchPromises);
+
+                // Process next batch
+                if (fileQueue.length > 0) {
+                    await uploadNextBatch();
+                }
+            };
+
+            await uploadNextBatch();
+
+            const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+
+            if (failedFiles.length > 0) {
+                showNotification(`⚠️ Upload complete with ${failedFiles.length} failures (${duration}s)`, 'error');
+                console.error('Failed files:', failedFiles);
+            } else if (dedupCount > 0) {
+                showNotification(`✓ Upload complete! ${completed} files in ${duration}s (${dedupCount} deduplicated)`, 'success');
             } else {
-                showNotification(`✓ All ${total} files uploaded successfully!`, 'success');
+                showNotification(`✓ All ${total} files uploaded in ${duration}s!`, 'success');
             }
 
             loadFiles();
