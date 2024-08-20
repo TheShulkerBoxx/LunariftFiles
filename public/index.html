@@ -207,6 +207,155 @@
                 opacity: 1;
             }
         }
+
+        /* Upload Progress Panel */
+        .upload-panel {
+            background: rgba(15, 23, 42, 0.95);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            border-radius: 12px;
+            max-height: 300px;
+            overflow: hidden;
+        }
+
+        .upload-panel-header {
+            background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
+            padding: 10px 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .upload-list {
+            max-height: 180px;
+            overflow-y: auto;
+            padding: 8px;
+        }
+
+        .upload-item {
+            background: rgba(30, 41, 59, 0.8);
+            border-radius: 8px;
+            padding: 8px 10px;
+            margin-bottom: 6px;
+            font-size: 11px;
+        }
+
+        .upload-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .upload-item-name {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 180px;
+            color: #e2e8f0;
+            font-weight: 500;
+        }
+
+        .upload-progress-bar {
+            height: 4px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 2px;
+            margin-top: 6px;
+            overflow: hidden;
+        }
+
+        .upload-progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #3b82f6 0%, #60a5fa 100%);
+            border-radius: 2px;
+            transition: width 0.3s ease;
+        }
+
+        .upload-progress-fill.complete {
+            background: linear-gradient(90deg, #10b981 0%, #34d399 100%);
+        }
+
+        .upload-progress-fill.failed {
+            background: linear-gradient(90deg, #ef4444 0%, #f87171 100%);
+        }
+
+        .upload-progress-fill.retrying {
+            background: linear-gradient(90deg, #f59e0b 0%, #fbbf24 100%);
+            animation: pulse 1s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.6;
+            }
+        }
+
+        .upload-stats {
+            background: rgba(30, 41, 59, 0.6);
+            padding: 8px 12px;
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+            font-size: 10px;
+            color: #94a3b8;
+        }
+
+        .overall-progress-bar {
+            height: 6px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 3px;
+            margin: 8px 12px;
+            overflow: hidden;
+        }
+
+        .overall-progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #3b82f6 0%, #8b5cf6 50%, #10b981 100%);
+            border-radius: 3px;
+            transition: width 0.3s ease;
+            background-size: 200% 100%;
+            animation: shimmer 2s linear infinite;
+        }
+
+        @keyframes shimmer {
+            0% {
+                background-position: 200% 0;
+            }
+
+            100% {
+                background-position: -200% 0;
+            }
+        }
+
+        .status-icon {
+            width: 14px;
+            height: 14px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 6px;
+            flex-shrink: 0;
+        }
+
+        .status-icon.uploading {
+            color: #3b82f6;
+        }
+
+        .status-icon.complete {
+            color: #10b981;
+        }
+
+        .status-icon.failed {
+            color: #ef4444;
+        }
+
+        .status-icon.pending {
+            color: #64748b;
+        }
+
+        .status-icon.retrying {
+            color: #f59e0b;
+        }
     </style>
 </head>
 
@@ -245,18 +394,45 @@
 
     <!-- Sidebar -->
     <div id="sidebar"
-        class="hidden w-full md:w-72 glass border-r border-slate-800 flex flex-col p-4 h-screen flex-shrink-0 z-20">
+        class="hidden w-full md:w-72 glass border-r border-slate-800 flex flex-col p-4 h-screen flex-shrink-0 z-20 overflow-hidden">
         <h1 class="text-lg font-bold text-blue-400 mb-1 italic">Lunarift Files</h1>
-        <p id="usrD" class="text-[9px] text-slate-500 font-mono mb-6 italic"></p>
+        <p id="usrD" class="text-[9px] text-slate-500 font-mono mb-4 italic"></p>
 
-        <!-- Queue removed -->
+        <!-- Upload Progress Panel -->
+        <div id="uploadPanel" class="upload-panel hidden mb-4">
+            <div class="upload-panel-header">
+                <div class="flex items-center gap-2">
+                    <i class="fas fa-cloud-upload-alt"></i>
+                    <span id="uploadPanelTitle" class="font-bold text-sm">Uploading...</span>
+                </div>
+                <button onclick="cancelAllUploads()" id="cancelUploadBtn"
+                    class="text-white/70 hover:text-white text-xs px-2 py-1 bg-white/10 rounded hover:bg-white/20 transition">
+                    <i class="fas fa-times"></i> Cancel
+                </button>
+            </div>
+
+            <div class="overall-progress-bar">
+                <div id="overallProgressFill" class="overall-progress-fill" style="width: 0%"></div>
+            </div>
+
+            <div id="uploadList" class="upload-list"></div>
+
+            <div class="upload-stats">
+                <div class="flex justify-between items-center">
+                    <span id="uploadStatsText">0 / 0 files</span>
+                    <span id="uploadSpeedText">-- MB/s</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex-1"></div>
 
         <div class="pt-4 border-t border-slate-800 space-y-2 text-xs text-white">
             <button onclick="newFolder()"
                 class="w-full bg-slate-800 py-2 rounded font-bold transition hover:bg-slate-700">New Folder</button>
 
             <div class="relative group">
-                <button onclick="uploadMenu.classList.toggle('hidden')"
+                <button onclick="uploadMenu.classList.toggle('hidden')" id="uploadBtn"
                     class="w-full bg-blue-600 py-2 rounded font-bold hover:bg-blue-500 transition">Upload...</button>
                 <div id="uploadMenu"
                     class="absolute bottom-full left-0 w-full glass rounded-lg mb-1 hidden border border-slate-700 overflow-hidden shadow-2xl">
@@ -531,26 +707,203 @@
         const MAX_RETRIES = 3;
         const RETRY_DELAY_BASE = 1000;
 
+        // Upload state
+        let uploadCancelled = false;
+        let activeUploads = new Map(); // fileId -> { name, status, progress, size }
+        let uploadStartTime = 0;
+        let totalBytesUploaded = 0;
+
         async function sleep(ms) {
             return new Promise(resolve => setTimeout(resolve, ms));
         }
 
-        async function uploadFileWithRetry(file, targetPath, retryCount = 0) {
+        function generateFileId() {
+            return `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        }
+
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+        }
+
+        function formatSpeed(bytesPerSecond) {
+            if (bytesPerSecond === 0) return '-- MB/s';
+            const mbps = bytesPerSecond / (1024 * 1024);
+            return mbps.toFixed(2) + ' MB/s';
+        }
+
+        function updateUploadUI() {
+            const panel = document.getElementById('uploadPanel');
+            const list = document.getElementById('uploadList');
+            const overallFill = document.getElementById('overallProgressFill');
+            const statsText = document.getElementById('uploadStatsText');
+            const speedText = document.getElementById('uploadSpeedText');
+            const titleText = document.getElementById('uploadPanelTitle');
+
+            if (activeUploads.size === 0) {
+                panel.classList.add('hidden');
+                return;
+            }
+
+            panel.classList.remove('hidden');
+
+            // Calculate totals
+            let completed = 0;
+            let failed = 0;
+            let totalSize = 0;
+            let uploadedSize = 0;
+
+            activeUploads.forEach(upload => {
+                totalSize += upload.size;
+                if (upload.status === 'complete' || upload.status === 'dedup') {
+                    completed++;
+                    uploadedSize += upload.size;
+                } else if (upload.status === 'failed') {
+                    failed++;
+                } else if (upload.status === 'uploading') {
+                    uploadedSize += upload.size * (upload.progress / 100);
+                }
+            });
+
+            const total = activeUploads.size;
+            const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
+
+            // Update overall progress
+            overallFill.style.width = `${percent}%`;
+
+            // Update stats
+            statsText.textContent = `${completed} / ${total} files (${formatBytes(uploadedSize)} / ${formatBytes(totalSize)})`;
+
+            // Calculate speed
+            const elapsed = (Date.now() - uploadStartTime) / 1000;
+            const speed = elapsed > 0 ? totalBytesUploaded / elapsed : 0;
+            speedText.textContent = formatSpeed(speed);
+
+            // Update title
+            if (completed === total && failed === 0) {
+                titleText.textContent = '✓ Upload Complete!';
+                document.getElementById('cancelUploadBtn').style.display = 'none';
+            } else if (uploadCancelled) {
+                titleText.textContent = 'Cancelled';
+            } else {
+                titleText.textContent = `Uploading... ${percent}%`;
+            }
+
+            // Render file list (show last 10)
+            const uploads = Array.from(activeUploads.values()).slice(-10);
+            list.innerHTML = uploads.map(upload => {
+                let statusIcon, statusClass, progressClass;
+                switch (upload.status) {
+                    case 'pending':
+                        statusIcon = '<i class="fas fa-clock"></i>';
+                        statusClass = 'pending';
+                        progressClass = '';
+                        break;
+                    case 'uploading':
+                        statusIcon = '<i class="fas fa-spinner fa-spin"></i>';
+                        statusClass = 'uploading';
+                        progressClass = '';
+                        break;
+                    case 'complete':
+                        statusIcon = '<i class="fas fa-check"></i>';
+                        statusClass = 'complete';
+                        progressClass = 'complete';
+                        break;
+                    case 'dedup':
+                        statusIcon = '<i class="fas fa-copy"></i>';
+                        statusClass = 'complete';
+                        progressClass = 'complete';
+                        break;
+                    case 'failed':
+                        statusIcon = '<i class="fas fa-times"></i>';
+                        statusClass = 'failed';
+                        progressClass = 'failed';
+                        break;
+                    case 'retrying':
+                        statusIcon = '<i class="fas fa-redo"></i>';
+                        statusClass = 'retrying';
+                        progressClass = 'retrying';
+                        break;
+                    default:
+                        statusIcon = '<i class="fas fa-file"></i>';
+                        statusClass = 'pending';
+                        progressClass = '';
+                }
+
+                return `
+                    <div class="upload-item">
+                        <div class="flex items-center">
+                            <span class="status-icon ${statusClass}">${statusIcon}</span>
+                            <span class="upload-item-name" title="${upload.name}">${upload.name}</span>
+                            <span class="ml-auto text-slate-500 text-[10px]">${formatBytes(upload.size)}</span>
+                        </div>
+                        <div class="upload-progress-bar">
+                            <div class="upload-progress-fill ${progressClass}" style="width: ${upload.progress}%"></div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function cancelAllUploads() {
+            uploadCancelled = true;
+            showNotification('Cancelling uploads...', 'info');
+        }
+
+        async function uploadFileWithRetry(fileId, file, targetPath, retryCount = 0) {
+            if (uploadCancelled) {
+                activeUploads.set(fileId, { ...activeUploads.get(fileId), status: 'failed', progress: 0 });
+                updateUploadUI();
+                throw new Error('Upload cancelled');
+            }
+
+            const upload = activeUploads.get(fileId);
+
+            if (retryCount > 0) {
+                activeUploads.set(fileId, { ...upload, status: 'retrying', progress: 0 });
+                updateUploadUI();
+            }
+
             const fd = new FormData();
             fd.append('file', file);
             fd.append('path', targetPath);
 
             try {
+                // Start upload
+                activeUploads.set(fileId, { ...upload, status: 'uploading', progress: 50 });
+                updateUploadUI();
+
                 const res = await apiFetch('/api/upload', { method: 'POST', body: fd });
                 if (!res) throw new Error('No response from server');
-                return await res.json();
+
+                const result = await res.json();
+                totalBytesUploaded += file.size;
+
+                // Mark complete
+                const finalStatus = result.deduplicated > 0 ? 'dedup' : 'complete';
+                activeUploads.set(fileId, { ...activeUploads.get(fileId), status: finalStatus, progress: 100 });
+                updateUploadUI();
+
+                return result;
             } catch (error) {
+                if (uploadCancelled) {
+                    activeUploads.set(fileId, { ...activeUploads.get(fileId), status: 'failed', progress: 0 });
+                    updateUploadUI();
+                    throw error;
+                }
+
                 if (retryCount < MAX_RETRIES) {
                     const delay = RETRY_DELAY_BASE * Math.pow(2, retryCount);
                     console.warn(`[Retry] ${file.name} failed, retrying in ${delay}ms (attempt ${retryCount + 1}/${MAX_RETRIES})`);
                     await sleep(delay);
-                    return uploadFileWithRetry(file, targetPath, retryCount + 1);
+                    return uploadFileWithRetry(fileId, file, targetPath, retryCount + 1);
                 }
+
+                activeUploads.set(fileId, { ...activeUploads.get(fileId), status: 'failed', progress: 0 });
+                updateUploadUI();
                 throw error;
             }
         }
@@ -558,45 +911,65 @@
         async function startUpload(files) {
             if (files.length === 0) return;
 
+            // Reset state
+            uploadCancelled = false;
+            activeUploads.clear();
+            uploadStartTime = Date.now();
+            totalBytesUploaded = 0;
+
+            // Reset cancel button
+            document.getElementById('cancelUploadBtn').style.display = 'block';
+
             const total = files.length;
             let completed = 0;
             let dedupCount = 0;
             let failedFiles = [];
 
-            showNotification(`🚀 Starting parallel upload of ${total} files...`, 'info');
-            const startTime = Date.now();
+            // Detect folder name if uploading a folder
+            let folderName = null;
+            if (files[0] && files[0].webkitRelativePath) {
+                folderName = files[0].webkitRelativePath.split('/')[0];
+            }
 
-            // Prepare all files with their target paths
-            const fileQueue = Array.from(files).map(f => ({
-                file: f,
-                targetPath: f.webkitRelativePath
+            // Prepare all files with their target paths and IDs
+            const fileQueue = Array.from(files).map(f => {
+                const fileId = generateFileId();
+                const targetPath = f.webkitRelativePath
                     ? '/' + f.webkitRelativePath.split('/').slice(0, -1).join('/') + '/'
-                    : currentPath
-            }));
+                    : currentPath;
+
+                // Add to tracking
+                activeUploads.set(fileId, {
+                    name: f.name,
+                    status: 'pending',
+                    progress: 0,
+                    size: f.size
+                });
+
+                return { fileId, file: f, targetPath };
+            });
+
+            updateUploadUI();
 
             // Process in parallel batches
             const uploadNextBatch = async () => {
-                const batch = [];
+                if (uploadCancelled) return;
 
+                const batch = [];
                 while (batch.length < MAX_PARALLEL_UPLOADS && fileQueue.length > 0) {
                     batch.push(fileQueue.shift());
                 }
 
                 if (batch.length === 0) return;
 
-                const batchPromises = batch.map(async ({ file, targetPath }) => {
+                const batchPromises = batch.map(async ({ fileId, file, targetPath }) => {
                     try {
-                        const result = await uploadFileWithRetry(file, targetPath);
+                        const result = await uploadFileWithRetry(fileId, file, targetPath);
                         completed++;
 
                         if (result.deduplicated > 0) {
                             dedupCount += result.deduplicated;
-                            console.log(`[Dedup] ${file.name} was deduplicated`);
                         }
-
-                        // Update progress
-                        const percent = Math.round((completed / total) * 100);
-                        console.log(`[Progress] ${completed}/${total} (${percent}%) - ${file.name}`);
 
                         return { success: true, name: file.name };
                     } catch (error) {
@@ -609,23 +982,34 @@
                 await Promise.all(batchPromises);
 
                 // Process next batch
-                if (fileQueue.length > 0) {
+                if (fileQueue.length > 0 && !uploadCancelled) {
                     await uploadNextBatch();
                 }
             };
 
             await uploadNextBatch();
 
-            const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+            const duration = ((Date.now() - uploadStartTime) / 1000).toFixed(1);
 
-            if (failedFiles.length > 0) {
+            if (uploadCancelled) {
+                showNotification(`Upload cancelled. ${completed}/${total} files completed.`, 'error');
+            } else if (failedFiles.length > 0) {
                 showNotification(`⚠️ Upload complete with ${failedFiles.length} failures (${duration}s)`, 'error');
                 console.error('Failed files:', failedFiles);
             } else if (dedupCount > 0) {
                 showNotification(`✓ Upload complete! ${completed} files in ${duration}s (${dedupCount} deduplicated)`, 'success');
             } else {
-                showNotification(`✓ All ${total} files uploaded in ${duration}s!`, 'success');
+                const speedMsg = formatSpeed(totalBytesUploaded / parseFloat(duration));
+                showNotification(`✓ All ${total} files uploaded in ${duration}s (${speedMsg})`, 'success');
             }
+
+            // Keep panel visible for a moment then hide
+            setTimeout(() => {
+                if (!uploadCancelled && failedFiles.length === 0) {
+                    activeUploads.clear();
+                    updateUploadUI();
+                }
+            }, 3000);
 
             loadFiles();
         }
