@@ -131,6 +131,68 @@ async function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+/**
+ * Normalize and validate a file path
+ * - Ensures path starts with /
+ * - Ensures path ends with /
+ * - Removes duplicate slashes
+ * - Prevents path traversal attacks
+ */
+function normalizePath(inputPath) {
+    if (!inputPath || typeof inputPath !== 'string') {
+        return '/';
+    }
+
+    // Remove any null bytes or control characters
+    let normalized = inputPath.replace(/[\x00-\x1f\x7f]/g, '');
+
+    // Replace backslashes with forward slashes
+    normalized = normalized.replace(/\\/g, '/');
+
+    // Remove duplicate slashes
+    normalized = normalized.replace(/\/+/g, '/');
+
+    // Ensure starts with /
+    if (!normalized.startsWith('/')) {
+        normalized = '/' + normalized;
+    }
+
+    // Ensure ends with / (it's a directory path)
+    if (!normalized.endsWith('/')) {
+        normalized = normalized + '/';
+    }
+
+    // Prevent path traversal
+    const parts = normalized.split('/').filter(p => p && p !== '.' && p !== '..');
+    normalized = '/' + parts.join('/') + (parts.length > 0 ? '/' : '');
+
+    // Final validation - if empty or just slashes, default to root
+    if (!normalized || normalized === '//' || normalized.trim() === '') {
+        return '/';
+    }
+
+    logger.debug(`Path normalized: "${inputPath}" -> "${normalized}"`);
+    return normalized;
+}
+
+/**
+ * Ensure all parent folders exist in the state
+ */
+function ensureFoldersExist(state, targetPath) {
+    if (!targetPath || targetPath === '/') return;
+
+    const parts = targetPath.split('/').filter(p => p);
+    let currentPath = '/';
+
+    for (const part of parts) {
+        currentPath += part + '/';
+        if (!state.folders.includes(currentPath)) {
+            state.folders.push(currentPath);
+            logger.debug(`Auto-created folder: ${currentPath}`);
+        }
+    }
+}
+
 // ============================================================================
 // DISCORD OPERATIONS
 // ============================================================================
@@ -396,16 +458,21 @@ app.post('/api/upload', auth, (req, res) => {
 
     const bb = busboy({ headers: req.headers, limits: { fileSize: 20 * 1024 * 1024 * 1024 } });
 
-    let targetPath = '/';
+    // Store fields as they come in
+    const fields = {};
     const filePromises = [];
+    const pendingFiles = []; // Store file data until we have all fields
 
     bb.on('field', (name, val) => {
-        if (name === 'path') targetPath = val;
+        fields[name] = val;
+        logger.debug(`[Upload] Received field: ${name} = "${val}"`);
     });
 
     bb.on('file', (name, file, info) => {
         const { filename } = info;
         const chunks = [];
+
+        logger.info(`[Upload] Starting file receive: ${filename}`);
 
         file.on('data', (data) => {
             chunks.push(data);
@@ -413,51 +480,74 @@ app.post('/api/upload', auth, (req, res) => {
 
         file.on('end', () => {
             const fileBuffer = Buffer.concat(chunks);
-            const fileHash = calculateBufferHash(fileBuffer);
-
-            // Check for deduplication
-            const existing = userEnv.state.files.find(f => f.hash === fileHash);
-
-            if (existing) {
-                // Deduplicate - just add a reference
-                const newEntry = {
-                    ...existing,
-                    id: generateUniqueId(),
-                    name: filename,
-                    path: targetPath,
-                    isReference: true,
-                    addedAt: new Date().toISOString()
-                };
-                userEnv.state.files.push(newEntry);
-                logger.info(`[Dedup] ${filename} matched existing file`);
-                filePromises.push(Promise.resolve({ deduplicated: true, name: filename }));
-            } else {
-                // Upload to Discord
-                const uploadPromise = uploadBufferToDiscord(username, fileBuffer, filename, targetPath)
-                    .then(entry => ({ success: true, name: filename, entry }))
-                    .catch(err => {
-                        logger.error(`Upload failed for ${filename}:`, err);
-                        throw err;
-                    });
-
-                filePromises.push(uploadPromise);
-            }
+            // Store file for processing after all fields are received
+            pendingFiles.push({ filename, fileBuffer });
+            logger.info(`[Upload] File received: ${filename} (${fileBuffer.length} bytes)`);
         });
     });
 
     bb.on('close', async () => {
         try {
+            // Get and normalize the target path from fields
+            const rawPath = fields['path'] || '/';
+            const targetPath = normalizePath(rawPath);
+
+            logger.info(`[Upload] Processing ${pendingFiles.length} files for path: "${rawPath}" -> "${targetPath}"`);
+
+            // Ensure parent folders exist
+            ensureFoldersExist(userEnv.state, targetPath);
+
+            // Process each pending file
+            for (const { filename, fileBuffer } of pendingFiles) {
+                const fileHash = calculateBufferHash(fileBuffer);
+
+                // Check for deduplication
+                const existing = userEnv.state.files.find(f => f.hash === fileHash);
+
+                if (existing) {
+                    // Deduplicate - just add a reference
+                    const newEntry = {
+                        ...existing,
+                        id: generateUniqueId(),
+                        name: filename,
+                        path: targetPath,
+                        isReference: true,
+                        addedAt: new Date().toISOString()
+                    };
+                    userEnv.state.files.push(newEntry);
+                    logger.info(`[Dedup] ${filename} -> ${targetPath} (matched existing file)`);
+                    filePromises.push(Promise.resolve({ deduplicated: true, name: filename, path: targetPath }));
+                } else {
+                    // Upload to Discord with captured targetPath
+                    const capturedPath = targetPath; // Capture in closure
+                    const uploadPromise = uploadBufferToDiscord(username, fileBuffer, filename, capturedPath)
+                        .then(entry => {
+                            logger.info(`[Upload] SUCCESS: ${filename} -> ${capturedPath}`);
+                            return { success: true, name: filename, path: capturedPath, entry };
+                        })
+                        .catch(err => {
+                            logger.error(`[Upload] FAILED: ${filename} -> ${capturedPath}:`, err);
+                            throw err;
+                        });
+
+                    filePromises.push(uploadPromise);
+                }
+            }
+
             const results = await Promise.all(filePromises);
             await saveUserEnv(username);
 
             const dedupCount = results.filter(r => r.deduplicated).length;
             const uploadCount = results.filter(r => r.success && !r.deduplicated).length;
 
+            logger.info(`[Upload] Batch complete: ${uploadCount} uploaded, ${dedupCount} deduplicated`);
+
             res.json({
                 success: true,
                 uploaded: uploadCount,
                 deduplicated: dedupCount,
-                total: results.length
+                total: results.length,
+                path: targetPath // Return the path so client can verify
             });
         } catch (error) {
             logger.error('Upload batch failed:', error);
