@@ -6,6 +6,7 @@ const { ChannelType } = require('discord.js');
 const { client } = require('./client');
 const config = require('../../config/config');
 const logger = require('../logger');
+const { saveDirectoryState, loadDirectoryState, getDirectorySize } = require('./metadataStorage');
 
 // In-memory registry of user environments
 const userRegistry = {};
@@ -71,16 +72,11 @@ async function fetchDirectory(username) {
     if (!env) return;
 
     try {
-        const metaChannel = await client.channels.fetch(env.metaId);
-        const metaMsgs = await metaChannel.messages.fetch({ limit: 5 });
-        const lastMeta = metaMsgs.find(m => m.attachments.first()?.name === 'directory.json');
-
-        if (lastMeta) {
-            const res = await fetch(lastMeta.attachments.first().url);
-            if (res.ok) {
-                const data = await res.json();
-                if (data) env.state = data;
-            }
+        const state = await loadDirectoryState(env.metaId);
+        if (state) {
+            env.state = state;
+            const sizeInfo = getDirectorySize(state);
+            logger.info(`Loaded directory for ${username}: ${state.files.length} files, ${sizeInfo.kb} KB`);
         }
     } catch (error) {
         logger.error(`Failed to fetch directory for ${username}:`, error);
@@ -97,22 +93,21 @@ async function saveUserEnv(username) {
     if (!env) return;
 
     try {
-        const { AttachmentBuilder } = require('discord.js');
-        const channel = await client.channels.fetch(env.metaId);
-        const attachment = new AttachmentBuilder(
-            Buffer.from(JSON.stringify(env.state)), 
-            { name: 'directory.json' }
-        );
-        await channel.send({ content: 'DIR_SYNC', files: [attachment] });
-
-        // Cleanup old messages
-        const old = await channel.messages.fetch({ limit: 5 });
-        const toDelete = Array.from(old.values()).slice(1);
-        if (toDelete.length > 0) {
-            await channel.bulkDelete(toDelete.map(m => m.id), true).catch(() => {});
+        const sizeInfo = getDirectorySize(env.state);
+        
+        // Log warning if approaching limit
+        if (parseFloat(sizeInfo.percentage) > 50) {
+            logger.warn(
+                `Directory size for ${username} is ${sizeInfo.percentage}% of chunk limit ` +
+                `(${sizeInfo.mb} MB, ${env.state.files.length} files)`
+            );
         }
+
+        await saveDirectoryState(env.metaId, env.state);
+        logger.info(`Saved directory for ${username}: ${env.state.files.length} files, ${sizeInfo.kb} KB`);
     } catch (error) {
         logger.error(`Failed to save metadata for ${username}:`, error);
+        throw error;
     }
 }
 

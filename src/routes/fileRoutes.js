@@ -26,6 +26,29 @@ router.get('/sync', (req, res) => {
 });
 
 /**
+ * GET /api/storage-info
+ * Get storage statistics for authenticated user
+ */
+router.get('/storage-info', (req, res) => {
+    const { getDirectorySize } = require('../services/discord/metadataStorage');
+    const sizeInfo = getDirectorySize(req.userEnv.state);
+    
+    res.json({
+        fileCount: req.userEnv.state.files.length,
+        folderCount: req.userEnv.state.folders.length,
+        metadataSize: {
+            bytes: sizeInfo.bytes,
+            kilobytes: sizeInfo.kb,
+            megabytes: sizeInfo.mb,
+            percentage: sizeInfo.percentage,
+            needsChunking: sizeInfo.needsChunking
+        },
+        warning: parseFloat(sizeInfo.percentage) > 50 ? 
+            'Your metadata is getting large. Consider archiving old files.' : null
+    });
+});
+
+/**
  * POST /api/upload
  * Upload files with streaming (no local storage)
  */
