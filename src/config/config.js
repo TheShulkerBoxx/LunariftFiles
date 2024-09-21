@@ -48,7 +48,7 @@ const config = {
 
     // Upload Configuration
     upload: {
-        chunkSize: 8 * 1024 * 1024, // 8MB chunks (safe for Discord 25MB limit)
+        chunkSize: 8 * 1024 * 1024, // 8MB chunks (safe for Discord 10MB limit)
         maxParallelUploads: 5,
         maxRetries: 3,
         retryDelayBase: 1000,

@@ -7,8 +7,8 @@ const { AttachmentBuilder } = require('discord.js');
 const { client } = require('./client');
 const logger = require('../logger');
 
-// Discord file size limit (25MB, but we'll use 20MB to be safe)
-const MAX_CHUNK_SIZE = 20 * 1024 * 1024;
+// Discord file size limit (10MB, but we'll use 8MB to be safe)
+const MAX_CHUNK_SIZE = 8 * 1024 * 1024;
 
 /**
  * Save directory state with automatic chunking if needed
