@@ -6,6 +6,7 @@ const express = require('express');
 const busboy = require('busboy');
 const authMiddleware = require('../middleware/authMiddleware');
 const { processFileUpload, processBatchUpload } = require('../services/files/uploadService');
+const { downloadFile, streamDownloadFile, getContentType } = require('../services/files/downloadService');
 const { createFolder, deleteItem, nukeAllFiles, getFileList } = require('../services/files/fileService');
 const { saveUserEnv } = require('../services/discord/channels');
 const config = require('../config/config');
@@ -32,7 +33,7 @@ router.get('/sync', (req, res) => {
 router.get('/storage-info', (req, res) => {
     const { getDirectorySize } = require('../services/discord/metadataStorage');
     const sizeInfo = getDirectorySize(req.userEnv.state);
-    
+
     res.json({
         fileCount: req.userEnv.state.files.length,
         folderCount: req.userEnv.state.folders.length,
@@ -43,9 +44,70 @@ router.get('/storage-info', (req, res) => {
             percentage: sizeInfo.percentage,
             needsChunking: sizeInfo.needsChunking
         },
-        warning: parseFloat(sizeInfo.percentage) > 50 ? 
+        warning: parseFloat(sizeInfo.percentage) > 50 ?
             'Your metadata is getting large. Consider archiving old files.' : null
     });
+});
+
+/**
+ * GET /api/download/:id
+ * Download a file by its ID
+ */
+router.get('/download/:id', async (req, res) => {
+    try {
+        const fileId = req.params.id;
+        const inline = req.query.inline === 'true'; // Optional: view in browser instead of download
+
+        // Find the file in user's state
+        const fileEntry = req.userEnv.state.files.find(f => f.id === fileId);
+
+        if (!fileEntry) {
+            return res.status(404).json({ error: 'File not found' });
+        }
+
+        // Check if file has messageIds (actual uploaded file vs reference)
+        if (!fileEntry.messageIds || fileEntry.messageIds.length === 0) {
+            // This might be a deduplicated reference, find the original
+            const originalFile = req.userEnv.state.files.find(
+                f => f.hash === fileEntry.hash && f.messageIds && f.messageIds.length > 0
+            );
+
+            if (!originalFile) {
+                return res.status(404).json({ error: 'File data not found' });
+            }
+
+            // Use the original file's data
+            fileEntry.messageIds = originalFile.messageIds;
+            fileEntry.channelId = originalFile.channelId;
+        }
+
+        logger.info(`[Download] Request for ${fileEntry.name} (${fileEntry.messageIds.length} chunks)`);
+
+        // Set response headers
+        const contentType = getContentType(fileEntry.name);
+        const disposition = inline ? 'inline' : 'attachment';
+
+        res.setHeader('Content-Type', contentType);
+        res.setHeader('Content-Disposition', `${disposition}; filename="${encodeURIComponent(fileEntry.name)}"`);
+        res.setHeader('Content-Length', fileEntry.size);
+        res.setHeader('X-File-Name', encodeURIComponent(fileEntry.name));
+        res.setHeader('X-File-Size', fileEntry.size);
+
+        // Stream the file chunks to the response
+        await streamDownloadFile(fileEntry, async (chunk, index, total) => {
+            res.write(chunk);
+        });
+
+        res.end();
+        logger.info(`[Download] Complete: ${fileEntry.name}`);
+    } catch (error) {
+        logger.error('[Download] Failed:', error);
+
+        // Only send error if headers haven't been sent
+        if (!res.headersSent) {
+            res.status(500).json({ error: 'Download failed: ' + error.message });
+        }
+    }
 });
 
 /**
@@ -56,9 +118,9 @@ router.post('/upload', (req, res) => {
     const username = req.username;
     const userEnv = req.userEnv;
 
-    const bb = busboy({ 
-        headers: req.headers, 
-        limits: { fileSize: config.upload.maxFileSize } 
+    const bb = busboy({
+        headers: req.headers,
+        limits: { fileSize: config.upload.maxFileSize }
     });
 
     const fields = {};
@@ -142,9 +204,9 @@ router.post('/upload-batch', (req, res) => {
     const username = req.username;
     const userEnv = req.userEnv;
 
-    const bb = busboy({ 
-        headers: req.headers, 
-        limits: { fileSize: config.upload.maxFileSize } 
+    const bb = busboy({
+        headers: req.headers,
+        limits: { fileSize: config.upload.maxFileSize }
     });
 
     let targetPath = '/';
@@ -171,9 +233,9 @@ router.post('/upload-batch', (req, res) => {
     bb.on('close', async () => {
         try {
             const results = await processBatchUpload(
-                username, 
-                userEnv, 
-                pendingFiles, 
+                username,
+                userEnv,
+                pendingFiles,
                 config.upload.maxParallelUploads
             );
 

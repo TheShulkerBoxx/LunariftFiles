@@ -10,7 +10,7 @@ const FileManager = {
     init() {
         this.attachEventListeners();
         this.loadFiles();
-        
+
         // Auto-refresh every 5 seconds
         setInterval(() => {
             this.loadFiles(true);
@@ -24,20 +24,20 @@ const FileManager = {
         // Navigation
         document.getElementById('backBtn').onclick = () => this.goBack();
         document.getElementById('refreshBtn').onclick = () => this.loadFiles();
-        
+
         // Actions
         document.getElementById('newFolderBtn').onclick = () => this.createFolder();
         document.getElementById('nukeBtn').onclick = () => this.nukeStorage();
         document.getElementById('latencyBtn').onclick = () => this.checkLatency();
         document.getElementById('logoutBtn').onclick = () => Auth.logout();
         document.getElementById('storageInfoBtn').onclick = () => this.showStorageInfo();
-        
+
         // Selection
         document.getElementById('selectAllCheckbox').onclick = () => this.toggleSelectAll();
         document.getElementById('bulkDownloadBtn').onclick = () => this.bulkDownload();
         document.getElementById('bulkMoveBtn').onclick = () => this.bulkMove();
         document.getElementById('bulkDeleteBtn').onclick = () => this.bulkDelete();
-        
+
         // Sorting
         document.querySelectorAll('.sortable').forEach(th => {
             th.onclick = () => {
@@ -46,7 +46,7 @@ const FileManager = {
                 this.render();
             };
         });
-        
+
         // Keyboard shortcuts
         document.addEventListener('keydown', (e) => {
             if (AppState.ui.isAuthenticated) {
@@ -85,17 +85,17 @@ const FileManager = {
      */
     async createFolder() {
         const folderName = await UI.showPrompt('Enter folder name:');
-        
+
         if (!folderName) return;
-        
+
         // Validate folder name
         if (!/^[a-zA-Z0-9_\-\s]+$/.test(folderName)) {
             UI.showNotification('Invalid folder name. Use only letters, numbers, spaces, _ and -', 'error');
             return;
         }
-        
+
         const folderPath = AppState.currentPath + folderName + '/';
-        
+
         try {
             await API.createFolder(folderPath);
             UI.showNotification('Folder created', 'success');
@@ -109,16 +109,16 @@ const FileManager = {
      * Delete item (file or folder)
      */
     async deleteItem(id, isFolder) {
-        const itemName = isFolder ? id.split('/').filter(p => p).pop() : 
-                         AppState.files.find(f => f.id === id)?.name;
-        
+        const itemName = isFolder ? id.split('/').filter(p => p).pop() :
+            AppState.files.find(f => f.id === id)?.name;
+
         const confirmed = await UI.showConfirm(
             'Delete Item',
             `Are you sure you want to delete "${itemName}"?`
         );
-        
+
         if (!confirmed) return;
-        
+
         try {
             await API.deleteItem(id, isFolder);
             UI.showNotification('Item deleted', 'success');
@@ -133,25 +133,25 @@ const FileManager = {
      */
     async bulkDelete() {
         const count = AppState.getSelectionCount();
-        
+
         const confirmed = await UI.showConfirm(
             'Delete Items',
             `Are you sure you want to delete ${count} item(s)?`
         );
-        
+
         if (!confirmed) return;
-        
+
         try {
             // Delete files
             for (const fileId of AppState.selection.files) {
                 await API.deleteItem(fileId, false);
             }
-            
+
             // Delete folders
             for (const folderPath of AppState.selection.folders) {
                 await API.deleteItem(folderPath, true);
             }
-            
+
             AppState.clearSelection();
             UI.showNotification(`${count} item(s) deleted`, 'success');
             await this.loadFiles();
@@ -163,14 +163,30 @@ const FileManager = {
     /**
      * Bulk download selected files
      */
-    bulkDownload() {
-        AppState.selection.files.forEach(fileId => {
-            const a = document.createElement('a');
-            a.href = API.getDownloadURL(fileId);
-            a.click();
-        });
-        
-        UI.showNotification(`Downloading ${AppState.selection.files.size} file(s)`, 'info');
+    async bulkDownload() {
+        const fileIds = Array.from(AppState.selection.files);
+
+        if (fileIds.length === 0) {
+            UI.showNotification('No files selected', 'info');
+            return;
+        }
+
+        UI.showNotification(`Downloading ${fileIds.length} file(s)...`, 'info');
+
+        for (const fileId of fileIds) {
+            const file = AppState.files.find(f => f.id === fileId);
+            if (file) {
+                try {
+                    await API.downloadFile(fileId, file.name);
+                    // Small delay between downloads to prevent browser throttling
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                } catch (error) {
+                    UI.showNotification(`Failed to download ${file.name}`, 'error');
+                }
+            }
+        }
+
+        UI.showNotification('Downloads complete', 'success');
     },
 
     /**
@@ -178,9 +194,9 @@ const FileManager = {
      */
     async bulkMove() {
         const newPath = await UI.showPrompt('Enter destination path:', AppState.currentPath);
-        
+
         if (!newPath) return;
-        
+
         // Note: Move operation not implemented in backend yet
         UI.showNotification('Move operation not yet implemented', 'info');
     },
@@ -190,17 +206,17 @@ const FileManager = {
      */
     async nukeStorage() {
         const password = await UI.showPrompt('Enter nuke password to delete ALL files:');
-        
+
         if (!password) return;
-        
+
         // Verify nuke password (for safety)
         const confirmed = await UI.showConfirm(
             'DANGER: Nuke Storage',
             'This will DELETE ALL FILES permanently. Are you absolutely sure?'
         );
-        
+
         if (!confirmed) return;
-        
+
         try {
             await API.nuke();
             AppState.setFiles([], []);
@@ -277,13 +293,13 @@ const FileManager = {
      */
     toggleSelection(id, isFolder, event) {
         event.stopPropagation();
-        
+
         if (isFolder) {
             AppState.toggleFolderSelection(id);
         } else {
             AppState.toggleFileSelection(id);
         }
-        
+
         this.render();
     },
 
@@ -320,7 +336,7 @@ const FileManager = {
         const selectionBar = document.getElementById('selectionBar');
         const selectionCount = document.getElementById('selectionCount');
         const count = AppState.getSelectionCount();
-        
+
         if (count > 0) {
             selectionBar.classList.remove('hidden');
             selectionCount.textContent = `${count} item${count !== 1 ? 's' : ''} selected`;
@@ -353,7 +369,7 @@ const FileManager = {
         folders.forEach(folderName => {
             const fullPath = AppState.currentPath + folderName + '/';
             const isSelected = AppState.selection.folders.has(fullPath);
-            const hasPending = AppState.files.some(f => 
+            const hasPending = AppState.files.some(f =>
                 f.path.startsWith(fullPath) && f.status === 'PENDING'
             );
 
@@ -388,7 +404,7 @@ const FileManager = {
     createFolderRow(folderName, fullPath, isSelected, hasPending) {
         const tr = document.createElement('tr');
         tr.className = 'file-row' + (isSelected ? ' selected' : '');
-        
+
         tr.innerHTML = `
             <td class="col-checkbox">
                 <div class="checkbox-container ${isSelected ? 'checked' : ''}">
@@ -435,12 +451,12 @@ const FileManager = {
      */
     createFileRow(file, isSelected) {
         const tr = document.createElement('tr');
-        tr.className = 'file-row' + (isSelected ? ' selected' : '') + 
-                       (file.status === 'PENDING' ? ' pending' : '');
-        
+        tr.className = 'file-row' + (isSelected ? ' selected' : '') +
+            (file.status === 'PENDING' ? ' pending' : '');
+
         const isPending = file.status === 'PENDING';
         const isDedup = file.isReference;
-        
+
         tr.innerHTML = `
             <td class="col-checkbox">
                 <div class="checkbox-container ${isSelected ? 'checked' : ''}">
@@ -457,9 +473,12 @@ const FileManager = {
             <td class="col-size">${UI.formatBytes(file.size)}</td>
             <td class="col-actions">
                 ${!isPending ? `
-                    <a href="${API.getDownloadURL(file.id)}" class="action-btn download-btn" title="Download" onclick="event.stopPropagation()">
+                    <button class="action-btn download-btn" title="Download">
                         <i class="fas fa-download"></i>
-                    </a>
+                    </button>
+                    <button class="action-btn preview-btn" title="Preview (Open in new tab)">
+                        <i class="fas fa-external-link-alt"></i>
+                    </button>
                 ` : ''}
                 <button class="action-btn delete-btn" title="Delete">
                     <i class="fas fa-trash"></i>
@@ -471,6 +490,25 @@ const FileManager = {
         tr.querySelector('.checkbox-container').onclick = (e) => {
             this.toggleSelection(file.id, false, e);
         };
+
+        // Download button
+        if (!isPending) {
+            tr.querySelector('.download-btn').onclick = async (e) => {
+                e.stopPropagation();
+                try {
+                    UI.showNotification(`Downloading ${file.name}...`, 'info');
+                    await API.downloadFile(file.id, file.name);
+                    UI.showNotification('Download started', 'success');
+                } catch (error) {
+                    UI.showNotification('Download failed', 'error');
+                }
+            };
+
+            tr.querySelector('.preview-btn').onclick = (e) => {
+                e.stopPropagation();
+                API.previewFile(file.id);
+            };
+        }
 
         // Delete button
         tr.querySelector('.delete-btn').onclick = (e) => {

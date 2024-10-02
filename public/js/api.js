@@ -11,7 +11,7 @@ const API = {
      */
     async request(endpoint, options = {}) {
         const url = this.baseURL + endpoint;
-        
+
         // Add authorization header if token exists
         const headers = options.headers || {};
         if (AppState.user.token && !options.skipAuth) {
@@ -176,9 +176,48 @@ const API = {
     },
 
     /**
-     * Get file download URL
+     * Get file download URL (for direct download)
      */
-    getDownloadURL(fileId) {
-        return `/download/${fileId}?token=${encodeURIComponent(AppState.user.token)}`;
+    getDownloadURL(fileId, inline = false) {
+        const inlineParam = inline ? '&inline=true' : '';
+        return `/api/download/${fileId}?${inlineParam}`;
+    },
+
+    /**
+     * Download a file
+     * Triggers browser download via hidden link
+     */
+    async downloadFile(fileId, fileName) {
+        try {
+            const response = await this.request(`/api/download/${fileId}`, {
+                method: 'GET'
+            });
+
+            if (!response) return false;
+
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = fileName;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+
+            window.URL.revokeObjectURL(url);
+            return true;
+        } catch (error) {
+            console.error('Download failed:', error);
+            throw error;
+        }
+    },
+
+    /**
+     * Preview a file (open in new tab for viewable types)
+     */
+    previewFile(fileId) {
+        // Open in new tab with authentication header via fetch
+        window.open(this.getDownloadURL(fileId, true), '_blank');
     }
 };

@@ -12,7 +12,6 @@ This document outlines a complete rewrite of Lunarift Files - a cloud storage ap
 | Issue | Description |
 |-------|-------------|
 | Single File | All code in one `server.js` (688 lines) |
-| Mixed Concerns | Auth, Discord, storage, and routes are intertwined |
 | Global State | `userRegistry` is a global object with no cleanup |
 | Duplicate Code | Two upload endpoints with similar logic |
 | No Download | File download functionality is missing |
