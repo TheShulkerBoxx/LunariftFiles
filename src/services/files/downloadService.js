@@ -121,6 +121,8 @@ function getContentType(filename) {
         'webp': 'image/webp',
         'svg': 'image/svg+xml',
         'ico': 'image/x-icon',
+        'heic': 'image/heic',
+        'heif': 'image/heif',
 
         // Documents
         'pdf': 'application/pdf',

@@ -476,8 +476,8 @@ const FileManager = {
                     <button class="action-btn download-btn" title="Download">
                         <i class="fas fa-download"></i>
                     </button>
-                    <button class="action-btn preview-btn" title="Preview (Open in new tab)">
-                        <i class="fas fa-external-link-alt"></i>
+                    <button class="action-btn preview-btn" title="Preview">
+                        <i class="fas fa-eye"></i>
                     </button>
                 ` : ''}
                 <button class="action-btn delete-btn" title="Delete">
@@ -506,7 +506,13 @@ const FileManager = {
 
             tr.querySelector('.preview-btn').onclick = (e) => {
                 e.stopPropagation();
-                API.previewFile(file.id);
+                FileViewer.open(file);
+            };
+
+            // Also open viewer on name click
+            tr.querySelector('.col-name').onclick = (e) => {
+                e.stopPropagation();
+                FileViewer.open(file);
             };
         }
 
