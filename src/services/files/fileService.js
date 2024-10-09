@@ -2,7 +2,7 @@
  * File service for CRUD operations
  */
 
-const { saveUserEnv } = require('../discord/channels');
+const { saveUserEnv, nukeUserChannels } = require('../discord/channels');
 const logger = require('../logger');
 
 /**
@@ -37,7 +37,7 @@ async function deleteItem(username, userEnv, id, isFolder) {
         userEnv.state.files = userEnv.state.files.filter(f => f.id !== id);
         logger.info(`Deleted file: ${id} for user ${username}`);
     }
-    
+
     await saveUserEnv(username);
     return { success: true };
 }
@@ -49,9 +49,9 @@ async function deleteItem(username, userEnv, id, isFolder) {
  * @returns {Promise<Object>} Success result
  */
 async function nukeAllFiles(username, userEnv) {
+    await nukeUserChannels(username);
     userEnv.state = { files: [], folders: [] };
-    await saveUserEnv(username);
-    logger.warn(`NUKE: All files deleted for user ${username}`);
+    logger.warn(`NUKE: Environment destroyed for user ${username}`);
     return { success: true };
 }
 

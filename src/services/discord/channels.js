@@ -24,16 +24,16 @@ async function getUserEnv(username) {
     logger.info(`Initializing user environment: ${username}`);
     const guild = await client.guilds.fetch(config.discord.guildId);
     const catName = `Lunarift - ${username}`;
-    
+
     // Find or create category
     let cat = guild.channels.cache.find(
         c => c.name === catName && c.type === ChannelType.GuildCategory
     );
 
     if (!cat) {
-        cat = await guild.channels.create({ 
-            name: catName, 
-            type: ChannelType.GuildCategory 
+        cat = await guild.channels.create({
+            name: catName,
+            type: ChannelType.GuildCategory
         });
     }
 
@@ -55,10 +55,10 @@ async function getUserEnv(username) {
     };
 
     userRegistry[username] = env;
-    
+
     // Fetch existing directory structure
     await fetchDirectory(username);
-    
+
     return env;
 }
 
@@ -94,7 +94,7 @@ async function saveUserEnv(username) {
 
     try {
         const sizeInfo = getDirectorySize(env.state);
-        
+
         // Log warning if approaching limit
         if (parseFloat(sizeInfo.percentage) > 50) {
             logger.warn(
@@ -123,5 +123,65 @@ module.exports = {
     getUserEnv,
     saveUserEnv,
     fetchDirectory,
-    getUserRegistry
+    getUserRegistry,
+    nukeUserChannels
 };
+
+/**
+ * Nuke all channels and category for a user
+ * @param {string} username - The username
+ * @returns {Promise<void>}
+ */
+async function nukeUserChannels(username) {
+    const env = userRegistry[username];
+    if (!env) {
+        logger.warn(`No environment found for user ${username} to nuke`);
+        return;
+    }
+
+    try {
+        const guild = await client.guilds.fetch(config.discord.guildId);
+
+        // Helper to safe delete channel
+        const safeDelete = async (id, name) => {
+            try {
+                const channel = await guild.channels.fetch(id);
+                if (channel) {
+                    await channel.delete();
+                    logger.info(`Deleted ${name} channel for ${username}`);
+                }
+            } catch (err) {
+                if (err.code !== 10003) { // 10003 = Unknown Channel
+                    logger.error(`Failed to delete ${name} channel: ${err.message}`);
+                }
+            }
+        };
+
+        // Delete channels
+        await safeDelete(env.dataId, 'storage');
+        await safeDelete(env.metaId, 'metadata');
+
+        // Delete category
+        // We need to fetch the channel to find its parent ID (category)
+        // Since we stored IDs, we have to find the category by name or parentID of a channel 
+        // But the channels might be deleted already.
+        // Best bet: Find category by name
+        const catName = `Lunarift - ${username}`;
+        const category = guild.channels.cache.find(
+            c => c.name === catName && c.type === ChannelType.GuildCategory
+        );
+
+        if (category) {
+            await category.delete();
+            logger.info(`Deleted category for ${username}`);
+        }
+
+        // Clear registry
+        delete userRegistry[username];
+        logger.warn(`Nuked environment for ${username}`);
+
+    } catch (error) {
+        logger.error(`Failed to nuke user channels for ${username}:`, error);
+        throw error;
+    }
+}
