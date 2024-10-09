@@ -115,10 +115,24 @@ const FileViewer = {
         }
 
         // --- TXT / CODE ---
-        else if (['txt', 'md', 'json', 'js', 'css', 'html', 'xml', 'log', 'ini', 'conf', 'yml', 'yaml'].includes(ext)) {
+        else if (['txt', 'md', 'json', 'js', 'css', 'html', 'xml', 'log', 'ini', 'conf', 'yml', 'yaml', 'sh', 'env'].includes(ext)) {
             iconClass = 'fa-file-code';
-            html = `<div class="loading-spinner"></div>`; // Placeholder
-            this.fetchTextContent(url, ext);
+            html = `<div class="flex flex-col items-center justify-center h-full"><div class="loading-spinner mb-4"></div><p class="text-slate-400">Loading text...</p></div>`;
+            this.fetchTextContent(url);
+        }
+
+        // --- HEIC ---
+        else if (['heic', 'heif'].includes(ext)) {
+            iconClass = 'fa-image';
+            html = `<div class="flex flex-col items-center justify-center h-full"><div class="loading-spinner mb-4"></div><p class="text-slate-400">Converting HEIC...</p></div>`;
+            this.renderHEIC(url);
+        }
+
+        // --- DOCX ---
+        else if (['docx'].includes(ext)) {
+            iconClass = 'fa-file-word';
+            html = `<div class="flex flex-col items-center justify-center h-full"><div class="loading-spinner mb-4"></div><p class="text-slate-400">Rendering Document...</p></div>`;
+            this.renderDOCX(url);
         }
 
         // --- UNSUPPORTED ---
@@ -126,12 +140,9 @@ const FileViewer = {
             iconClass = 'fa-file';
             let message = "Preview not available";
 
-            if (['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'].includes(ext)) {
+            if (['doc', 'xls', 'xlsx', 'ppt', 'pptx'].includes(ext)) {
                 iconClass = 'fa-file-word';
-                message = "Microsoft Office files cannot be previewed directly.";
-            } else if (['heic'].includes(ext)) {
-                iconClass = 'fa-image';
-                message = "HEIC files cannot be previewed in the browser.";
+                message = "This document format cannot be previewed directly.";
             }
 
             html = `
@@ -151,9 +162,79 @@ const FileViewer = {
     },
 
     /**
+     * Render HEIC image
+     */
+    async renderHEIC(url) {
+        try {
+            if (!window.heic2any) {
+                throw new Error('HEIC library not loaded');
+            }
+
+            const res = await fetch(url);
+            const blob = await res.blob();
+
+            const conversionResult = await heic2any({
+                blob,
+                toType: "image/jpeg",
+                quality: 0.8
+            });
+
+            const jpgBlob = Array.isArray(conversionResult) ? conversionResult[0] : conversionResult;
+            const imgUrl = URL.createObjectURL(jpgBlob);
+
+            const content = document.getElementById('viewerContent');
+            content.innerHTML = `<img src="${imgUrl}" class="max-w-full max-h-full object-contain rounded shadow-lg">`;
+
+            // Clean up later? Browser handles weak refs, but unique URL persists. 
+            // We'll leave it for session.
+        } catch (error) {
+            console.error('HEIC Error:', error);
+            this.showError('Failed to convert HEIC image');
+        }
+    },
+
+    /**
+     * Render DOCX document
+     */
+    async renderDOCX(url) {
+        try {
+            if (!window.docx) {
+                throw new Error('DOCX library not loaded');
+            }
+
+            const res = await fetch(url);
+            const blob = await res.blob();
+
+            const content = document.getElementById('viewerContent');
+            // Clear loading spinner and set container
+            content.innerHTML = `<div id="docx-container" class="docx-wrapper bg-white text-black p-8 w-full h-full overflow-auto rounded shadow-lg"></div>`;
+
+            await docx.renderAsync(blob, document.getElementById('docx-container'), null, {
+                className: "docx-content",
+                inWrapper: false
+            });
+        } catch (error) {
+            console.error('DOCX Error:', error);
+            this.showError('Failed to render DOCX document');
+        }
+    },
+
+    /**
+     * Show Error Message
+     */
+    showError(message) {
+        document.getElementById('viewerContent').innerHTML = `
+            <div class="text-center text-red-400 p-8">
+                <i class="fas fa-exclamation-circle text-4xl mb-4"></i>
+                <p>${message}</p>
+            </div>
+        `;
+    },
+
+    /**
      * Fetch and display text content
      */
-    async fetchTextContent(url, ext) {
+    async fetchTextContent(url) {
         try {
             const res = await fetch(url);
             const text = await res.text();

@@ -179,8 +179,9 @@ const API = {
      * Get file download URL (for direct download)
      */
     getDownloadURL(fileId, inline = false) {
+        const token = encodeURIComponent(AppState.user.token || '');
         const inlineParam = inline ? '&inline=true' : '';
-        return `/api/download/${fileId}?${inlineParam}`;
+        return `/api/download/${fileId}?token=${token}${inlineParam}`;
     },
 
     /**
