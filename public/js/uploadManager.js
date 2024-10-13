@@ -108,11 +108,11 @@ const UploadManager = {
             if (AppState.uploads.cancelled) break;
 
             const batch = uploadQueue.slice(i, i + this.MAX_PARALLEL_UPLOADS);
-            
+
             const batchPromises = batch.map(async (item) => {
                 try {
                     const result = await this.uploadFileWithRetry(item);
-                    
+
                     if (result.deduplicated > 0) {
                         deduplicated++;
                     } else {
@@ -143,7 +143,7 @@ const UploadManager = {
         // Reload files
         setTimeout(() => {
             FileManager.loadFiles();
-            
+
             // Hide upload panel after a delay
             setTimeout(() => {
                 this.hideUploadPanel();
@@ -155,7 +155,7 @@ const UploadManager = {
      * Prepare upload queue with paths
      */
     prepareUploadQueue(files) {
-        return files.map(file => {
+        return files.map((file, i) => {
             const id = this.generateFileId();
             let targetPath;
 
@@ -169,7 +169,13 @@ const UploadManager = {
                 targetPath = AppState.currentPath;
             }
 
-            return { id, file, path: targetPath };
+            return {
+                id,
+                file,
+                path: targetPath,
+                batchIndex: i + 1,
+                batchTotal: files.length
+            };
         });
     },
 
@@ -196,8 +202,13 @@ const UploadManager = {
         this.updateUI();
 
         try {
-            const result = await API.uploadFile(item.file, item.path);
-            
+            const result = await API.uploadFile(
+                item.file,
+                item.path,
+                item.batchIndex,
+                item.batchTotal
+            );
+
             if (!result) {
                 throw new Error('Upload failed');
             }
@@ -220,7 +231,7 @@ const UploadManager = {
             if (retryCount < this.MAX_RETRIES) {
                 const delay = this.RETRY_DELAY_BASE * Math.pow(2, retryCount);
                 console.warn(`Retrying ${item.file.name} in ${delay}ms (attempt ${retryCount + 1}/${this.MAX_RETRIES})`);
-                
+
                 await this.sleep(delay);
                 return this.uploadFileWithRetry(item, retryCount + 1);
             }
@@ -266,7 +277,7 @@ const UploadManager = {
         const failed = uploads.filter(u => u.status === 'failed').length;
 
         // Update title
-        document.getElementById('uploadPanelTitle').textContent = 
+        document.getElementById('uploadPanelTitle').textContent =
             `Uploading... (${completed}/${total})`;
 
         // Update overall progress
@@ -276,9 +287,9 @@ const UploadManager = {
         // Update stats
         const elapsed = (Date.now() - AppState.uploads.startTime) / 1000;
         const speed = elapsed > 0 ? AppState.uploads.totalBytesUploaded / elapsed : 0;
-        document.getElementById('uploadStatsText').textContent = 
+        document.getElementById('uploadStatsText').textContent =
             `${completed} / ${total} files${failed > 0 ? ` (${failed} failed)` : ''}`;
-        document.getElementById('uploadSpeedText').textContent = 
+        document.getElementById('uploadSpeedText').textContent =
             speed > 0 ? UI.formatSpeed(speed) : '-- MB/s';
 
         // Update upload list
@@ -290,10 +301,10 @@ const UploadManager = {
      */
     renderUploadList(uploads) {
         const list = document.getElementById('uploadList');
-        
+
         list.innerHTML = uploads.map(upload => {
             let statusIcon, statusClass, progressClass;
-            
+
             switch (upload.status) {
                 case 'pending':
                     statusIcon = '<i class="fas fa-clock"></i>';
@@ -356,12 +367,12 @@ const UploadManager = {
      */
     normalizePath(inputPath) {
         if (!inputPath || typeof inputPath !== 'string') return '/';
-        
+
         let normalized = inputPath.replace(/\\/g, '/').replace(/\/+/g, '/');
-        
+
         if (!normalized.startsWith('/')) normalized = '/' + normalized;
         if (!normalized.endsWith('/')) normalized = normalized + '/';
-        
+
         // Remove . and .. segments
         const parts = normalized.split('/').filter(p => p && p !== '.' && p !== '..');
         return '/' + parts.join('/') + (parts.length > 0 ? '/' : '');

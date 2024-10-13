@@ -172,7 +172,11 @@ router.post('/upload', (req, res) => {
             const uploadCount = results.filter(r => r.success && !r.deduplicated).length;
             const errorCount = results.filter(r => r.error).length;
 
-            logger.info(`[Upload] Request complete: ${uploadCount} uploaded, ${dedupCount} deduplicated, ${errorCount} errors`);
+            const batchIndex = fields['batchIndex'];
+            const batchTotal = fields['batchTotal'];
+            const progressStr = (batchIndex && batchTotal) ? `(File ${batchIndex}/${batchTotal})` : '';
+
+            logger.info(`[Upload] Request complete: ${uploadCount} uploaded, ${dedupCount} deduplicated, ${errorCount} errors ${progressStr}`);
 
             res.json({
                 success: true,

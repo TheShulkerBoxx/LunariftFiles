@@ -96,10 +96,12 @@ const API = {
     /**
      * Upload files
      */
-    async uploadFile(file, path) {
+    async uploadFile(file, path, batchIndex = 1, batchTotal = 1) {
         const formData = new FormData();
         formData.append('file', file);
         formData.append('path', path);
+        formData.append('batchIndex', batchIndex);
+        formData.append('batchTotal', batchTotal);
 
         const response = await this.request('/api/upload', {
             method: 'POST',
