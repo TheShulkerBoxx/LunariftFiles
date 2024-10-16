@@ -29,7 +29,7 @@ app.use(helmet({
         directives: {
             defaultSrc: ["'self'"],
             styleSrc: ["'self'", "'unsafe-inline'", "https://cdn.tailwindcss.com", "https://cdnjs.cloudflare.com"],
-            scriptSrc: ["'self'", "'unsafe-inline'", "https://cdn.tailwindcss.com", "https://unpkg.com"],
+            scriptSrc: ["'self'", "'unsafe-inline'", "https://cdn.tailwindcss.com", "https://unpkg.com", "https://cdnjs.cloudflare.com"],
             scriptSrcAttr: ["'unsafe-inline'", "'unsafe-hashes'"],
             fontSrc: ["'self'", "https://cdnjs.cloudflare.com"],
             imgSrc: ["'self'", "data:", "https:", "blob:"],
