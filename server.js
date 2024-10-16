@@ -29,10 +29,15 @@ app.use(helmet({
         directives: {
             defaultSrc: ["'self'"],
             styleSrc: ["'self'", "'unsafe-inline'", "https://cdn.tailwindcss.com", "https://cdnjs.cloudflare.com"],
-            scriptSrc: ["'self'", "'unsafe-inline'", "https://cdn.tailwindcss.com"],
+            scriptSrc: ["'self'", "'unsafe-inline'", "https://cdn.tailwindcss.com", "https://unpkg.com"],
             scriptSrcAttr: ["'unsafe-inline'", "'unsafe-hashes'"],
             fontSrc: ["'self'", "https://cdnjs.cloudflare.com"],
-            imgSrc: ["'self'", "data:", "https:"]
+            imgSrc: ["'self'", "data:", "https:", "blob:"],
+            mediaSrc: ["'self'", "blob:"],
+            connectSrc: ["'self'", "https://unpkg.com"],
+            frameSrc: ["'self'", "blob:"],
+            objectSrc: ["'self'", "blob:"],
+            workerSrc: ["'self'", "blob:"]
         }
     }
 }));
@@ -69,7 +74,7 @@ async function startServer() {
     try {
         // Initialize Discord client first
         await initializeDiscord();
-        
+
         // Start Express server
         app.listen(config.server.port, '0.0.0.0', () => {
             logger.info(`Lunarift Files server ready on port ${config.server.port}`);
