@@ -111,7 +111,14 @@ const FileViewer = {
         // --- PDF ---
         else if (ext === 'pdf') {
             iconClass = 'fa-file-pdf';
-            html = `<iframe src="${url}" class="w-full h-full border-none rounded"></iframe>`;
+            html = `
+                <object data="${url}" type="application/pdf" class="w-full h-full border-none rounded">
+                    <div class="flex flex-col items-center justify-center h-full text-slate-400">
+                        <p class="mb-4">Unable to display PDF directly.</p>
+                        <a href="${url}" class="text-blue-500 hover:text-blue-400 underline">Click to download</a>
+                    </div>
+                </object>
+            `;
         }
 
         // --- TXT / CODE ---
