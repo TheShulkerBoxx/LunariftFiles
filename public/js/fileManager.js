@@ -495,6 +495,7 @@ const FileManager = {
         if (!isPending) {
             tr.querySelector('.download-btn').onclick = async (e) => {
                 e.stopPropagation();
+                console.log('[FileManager] Download clicked for:', file.name);
                 try {
                     UI.showNotification(`Downloading ${file.name}...`, 'info');
                     await API.downloadFile(file.id, file.name);
@@ -506,12 +507,14 @@ const FileManager = {
 
             tr.querySelector('.preview-btn').onclick = (e) => {
                 e.stopPropagation();
+                console.log('[FileManager] Preview clicked for:', file.name);
                 FileViewer.open(file);
             };
 
             // Also open viewer on name click
             tr.querySelector('.col-name').onclick = (e) => {
                 e.stopPropagation();
+                console.log('[FileManager] Name clicked for:', file.name);
                 FileViewer.open(file);
             };
         }

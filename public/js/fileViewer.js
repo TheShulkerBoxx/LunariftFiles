@@ -26,7 +26,7 @@ const FileViewer = {
 
         const modal = document.createElement('div');
         modal.id = 'fileViewerModal';
-        modal.className = 'fixed inset-0 z-50 hidden bg-slate-900/95 flex flex-col';
+        modal.className = 'fixed inset-0 z-[100] hidden bg-slate-900/95 flex flex-col';
         modal.innerHTML = `
             <div class="flex items-center justify-between p-4 border-b border-slate-700 bg-slate-900">
                 <div class="flex items-center gap-3 overflow-hidden">
@@ -55,12 +55,18 @@ const FileViewer = {
      * @param {Object} file - File object {id, name, size}
      */
     open(file) {
+        console.log('[FileViewer] Opening file:', file);
         const modal = document.getElementById('fileViewerModal');
         const content = document.getElementById('viewerContent');
         const nameEl = document.getElementById('viewerFileName');
         const sizeEl = document.getElementById('viewerFileSize');
         const iconEl = document.getElementById('viewerFileIcon');
         const downloadBtn = document.getElementById('viewerDownloadBtn');
+
+        if (!modal) {
+            console.error('[FileViewer] Modal element not found!');
+            return;
+        }
 
         // Update Header
         nameEl.textContent = file.name;
@@ -72,19 +78,23 @@ const FileViewer = {
 
         // Determine type
         const ext = file.name.split('.').pop().toLowerCase();
+        console.log('[FileViewer] Extension:', ext);
         let html = '';
         let iconClass = 'fa-file';
 
         const url = API.getDownloadURL(file.id, true);
+        console.log('[FileViewer] URL:', url);
 
         // --- IMAGES ---
         if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'ico', 'bmp'].includes(ext)) {
+            console.log('[FileViewer] Type: Image');
             iconClass = 'fa-image';
             html = `<img src="${url}" class="max-w-full max-h-full object-contain rounded shadow-lg" alt="${file.name}">`;
         }
 
         // --- VIDEO ---
         else if (['mp4', 'webm', 'mov', 'mkv'].includes(ext)) {
+            console.log('[FileViewer] Type: Video');
             iconClass = 'fa-video';
             html = `
                 <video controls autoplay class="max-w-full max-h-full rounded shadow-lg outline-none">
@@ -96,6 +106,7 @@ const FileViewer = {
 
         // --- AUDIO ---
         else if (['mp3', 'wav', 'ogg', 'flac'].includes(ext)) {
+            console.log('[FileViewer] Type: Audio');
             iconClass = 'fa-music';
             html = `
                 <div class="bg-slate-800 p-8 rounded-xl shadow-2xl flex flex-col items-center gap-4">
@@ -110,6 +121,7 @@ const FileViewer = {
 
         // --- PDF ---
         else if (ext === 'pdf') {
+            console.log('[FileViewer] Type: PDF');
             iconClass = 'fa-file-pdf';
             html = `
                 <object data="${url}" type="application/pdf" class="w-full h-full border-none rounded">
@@ -123,6 +135,7 @@ const FileViewer = {
 
         // --- TXT / CODE ---
         else if (['txt', 'md', 'json', 'js', 'css', 'html', 'xml', 'log', 'ini', 'conf', 'yml', 'yaml', 'sh', 'env'].includes(ext)) {
+            console.log('[FileViewer] Type: Text/Code');
             iconClass = 'fa-file-code';
             html = `<div class="flex flex-col items-center justify-center h-full"><div class="loading-spinner mb-4"></div><p class="text-slate-400">Loading text...</p></div>`;
             this.fetchTextContent(url);
@@ -130,6 +143,7 @@ const FileViewer = {
 
         // --- HEIC ---
         else if (['heic', 'heif'].includes(ext)) {
+            console.log('[FileViewer] Type: HEIC');
             iconClass = 'fa-image';
             html = `<div class="flex flex-col items-center justify-center h-full"><div class="loading-spinner mb-4"></div><p class="text-slate-400">Converting HEIC...</p></div>`;
             this.renderHEIC(url);
@@ -137,6 +151,7 @@ const FileViewer = {
 
         // --- DOCX ---
         else if (['docx'].includes(ext)) {
+            console.log('[FileViewer] Type: DOCX');
             iconClass = 'fa-file-word';
             html = `<div class="flex flex-col items-center justify-center h-full"><div class="loading-spinner mb-4"></div><p class="text-slate-400">Rendering Document...</p></div>`;
             this.renderDOCX(url);
@@ -144,6 +159,7 @@ const FileViewer = {
 
         // --- UNSUPPORTED ---
         else {
+            console.log('[FileViewer] Type: Unsupported');
             iconClass = 'fa-file';
             let message = "Preview not available";
 
