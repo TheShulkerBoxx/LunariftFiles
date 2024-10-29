@@ -181,7 +181,12 @@ const FileViewer = {
 
         iconEl.className = `fas ${iconClass} text-xl text-blue-500`;
         content.innerHTML = html;
+
+        console.log('[FileViewer] Removing hidden class and forcing display...');
         modal.classList.remove('hidden');
+        modal.style.display = 'flex';
+        modal.style.zIndex = '9999';
+        modal.style.backgroundColor = 'rgba(15, 23, 42, 0.95)';
     },
 
     /**
