@@ -187,6 +187,11 @@ const FileViewer = {
         modal.style.display = 'flex';
         modal.style.zIndex = '9999';
         modal.style.backgroundColor = 'rgba(15, 23, 42, 0.95)';
+        modal.style.border = '5px solid red'; // DEBUG: VISUAL CONFIRMATION
+
+        // Log dimensions
+        const rect = modal.getBoundingClientRect();
+        console.log('[FileViewer] Modal Dimensions:', rect.width, 'x', rect.height, 'Top:', rect.top, 'Left:', rect.left);
     },
 
     /**
