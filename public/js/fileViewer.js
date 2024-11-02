@@ -27,6 +27,12 @@ const FileViewer = {
         const modal = document.createElement('div');
         modal.id = 'fileViewerModal';
         modal.className = 'fixed inset-0 z-[100] hidden bg-slate-900/95 flex flex-col';
+        // Force geometry in case Tailwind fails
+        modal.style.position = 'fixed';
+        modal.style.top = '0';
+        modal.style.left = '0';
+        modal.style.width = '100vw';
+        modal.style.height = '100vh';
         modal.innerHTML = `
             <div class="flex items-center justify-between p-4 border-b border-slate-700 bg-slate-900">
                 <div class="flex items-center gap-3 overflow-hidden">
