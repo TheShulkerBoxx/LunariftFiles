@@ -26,31 +26,28 @@ const FileViewer = {
 
         const modal = document.createElement('div');
         modal.id = 'fileViewerModal';
-        modal.className = 'fixed inset-0 z-[100] hidden bg-slate-900/95 flex flex-col';
-        // Force geometry in case Tailwind fails
+        // Flex center for lightbox feel, backdrop blur
+        modal.className = 'fixed inset-0 z-[100] hidden bg-black/90 flex items-center justify-center backdrop-blur-sm';
+
+        // Force geometry
         modal.style.position = 'fixed';
         modal.style.top = '0';
         modal.style.left = '0';
         modal.style.width = '100vw';
         modal.style.height = '100vh';
+
+        // Close when clicking empty space
+        modal.onclick = (e) => {
+            if (e.target === modal || e.target.id === 'viewerWrapper') {
+                this.close();
+            }
+        };
+
         modal.innerHTML = `
-            <div class="flex items-center justify-between p-4 border-b border-slate-700 bg-slate-900">
-                <div class="flex items-center gap-3 overflow-hidden">
-                    <span id="viewerFileIcon" class="text-xl text-blue-500"></span>
-                    <h3 id="viewerFileName" class="text-white font-medium truncate"></h3>
-                    <span id="viewerFileSize" class="text-xs text-slate-400"></span>
+            <div id="viewerWrapper" class="w-full h-full flex items-center justify-center p-4 relative overflow-hidden">
+                <div id="viewerContent" class="relative flex items-center justify-center pointer-events-auto transition-transform duration-100 ease-out origin-center">
+                    <!-- Dynamic Content -->
                 </div>
-                <div class="flex items-center gap-2">
-                    <a id="viewerDownloadBtn" href="#" class="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded transition" title="Download">
-                        <i class="fas fa-download"></i>
-                    </a>
-                    <button onclick="FileViewer.close()" class="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded transition" title="Close">
-                        <i class="fas fa-times"></i>
-                    </button>
-                </div>
-            </div>
-            <div id="viewerContent" class="flex-1 overflow-auto flex items-center justify-center p-4 relative">
-                <!-- Content goes here -->
             </div>
         `;
         document.body.appendChild(modal);
@@ -61,49 +58,37 @@ const FileViewer = {
      * @param {Object} file - File object {id, name, size}
      */
     open(file) {
-        console.log('[FileViewer] Opening file:', file);
+        console.log('[FileViewer] Opening file:', file.name);
         const modal = document.getElementById('fileViewerModal');
         const content = document.getElementById('viewerContent');
-        const nameEl = document.getElementById('viewerFileName');
-        const sizeEl = document.getElementById('viewerFileSize');
-        const iconEl = document.getElementById('viewerFileIcon');
-        const downloadBtn = document.getElementById('viewerDownloadBtn');
 
         if (!modal) {
             console.error('[FileViewer] Modal element not found!');
             return;
         }
 
-        // Update Header
-        nameEl.textContent = file.name;
-        sizeEl.textContent = UI.formatBytes(file.size);
-        downloadBtn.onclick = (e) => {
-            e.preventDefault();
-            API.downloadFile(file.id, file.name);
-        };
+        // Reset Zoom
+        this.cleanupZoom();
 
         // Determine type
         const ext = file.name.split('.').pop().toLowerCase();
-        console.log('[FileViewer] Extension:', ext);
         let html = '';
-        let iconClass = 'fa-file';
-
         const url = API.getDownloadURL(file.id, true);
-        console.log('[FileViewer] URL:', url);
 
         // --- IMAGES ---
         if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'ico', 'bmp'].includes(ext)) {
-            console.log('[FileViewer] Type: Image');
-            iconClass = 'fa-image';
-            html = `<img src="${url}" class="max-w-full max-h-full object-contain rounded shadow-lg" alt="${file.name}">`;
+            // Constrain image to 90vw/90vh, allow object-contain to keep aspect ratio
+            // ID 'viewerImage' for zoom logic
+            html = `<img id="viewerImage" src="${url}" style="max-width: 90vw; max-height: 90vh; cursor: zoom-in;" class="rounded-lg shadow-2xl select-none" alt="${file.name}">`;
+
+            // Wait for render then setup zoom
+            requestAnimationFrame(() => this.setupImageZoom());
         }
 
         // --- VIDEO ---
         else if (['mp4', 'webm', 'mov', 'mkv'].includes(ext)) {
-            console.log('[FileViewer] Type: Video');
-            iconClass = 'fa-video';
             html = `
-                <video controls autoplay class="max-w-full max-h-full rounded shadow-lg outline-none">
+                <video controls autoplay style="max-width: 90vw; max-height: 90vh;" class="rounded-lg shadow-2xl outline-none bg-black">
                     <source src="${url}" type="video/mp4">
                     Your browser does not support the video tag.
                 </video>
@@ -112,14 +97,14 @@ const FileViewer = {
 
         // --- AUDIO ---
         else if (['mp3', 'wav', 'ogg', 'flac'].includes(ext)) {
-            console.log('[FileViewer] Type: Audio');
-            iconClass = 'fa-music';
             html = `
-                <div class="bg-slate-800 p-8 rounded-xl shadow-2xl flex flex-col items-center gap-4">
-                    <i class="fas fa-music text-6xl text-blue-500 mb-4"></i>
-                    <audio controls autoplay class="w-full min-w-[300px]">
+                <div class="bg-white p-8 rounded-xl shadow-2xl flex flex-col items-center gap-4 min-w-[300px]">
+                    <div class="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center">
+                        <i class="fas fa-music text-3xl text-blue-500"></i>
+                    </div>
+                    <h3 class="text-gray-800 font-medium">${file.name}</h3>
+                    <audio controls autoplay class="w-full">
                         <source src="${url}" type="audio/mpeg">
-                        Your browser does not support the audio element.
                     </audio>
                 </div>
             `;
@@ -127,47 +112,42 @@ const FileViewer = {
 
         // --- PDF ---
         else if (ext === 'pdf') {
-            console.log('[FileViewer] Type: PDF');
-            iconClass = 'fa-file-pdf';
             html = `
-                <object data="${url}" type="application/pdf" class="w-full h-full border-none rounded">
-                    <div class="flex flex-col items-center justify-center h-full text-slate-400">
-                        <p class="mb-4">Unable to display PDF directly.</p>
-                        <a href="${url}" class="text-blue-500 hover:text-blue-400 underline">Click to download</a>
-                    </div>
-                </object>
+                <div class="bg-white w-[90vw] h-[90vh] rounded-lg shadow-2xl overflow-hidden relative">
+                    <object data="${url}" type="application/pdf" class="w-full h-full">
+                        <div class="flex flex-col items-center justify-center h-full text-slate-500">
+                            <p class="mb-4">Unable to display PDF directly.</p>
+                            <a href="${url}" class="text-blue-600 hover:text-blue-800 underline">Click to download</a>
+                        </div>
+                    </object>
+                </div>
             `;
         }
 
         // --- TXT / CODE ---
         else if (['txt', 'md', 'json', 'js', 'css', 'html', 'xml', 'log', 'ini', 'conf', 'yml', 'yaml', 'sh', 'env'].includes(ext)) {
-            console.log('[FileViewer] Type: Text/Code');
-            iconClass = 'fa-file-code';
-            html = `<div class="flex flex-col items-center justify-center h-full"><div class="loading-spinner mb-4"></div><p class="text-slate-400">Loading text...</p></div>`;
+            // White container, scrollable
+            html = `<div class="bg-white w-[80vw] h-[80vh] flex flex-col items-center justify-center rounded-lg shadow-2xl overflow-hidden"><div class="loading-spinner mb-4 border-blue-500"></div><p class="text-gray-500">Loading text...</p></div>`;
             this.fetchTextContent(url);
         }
 
         // --- HEIC ---
         else if (['heic', 'heif'].includes(ext)) {
-            console.log('[FileViewer] Type: HEIC');
-            iconClass = 'fa-image';
-            html = `<div class="flex flex-col items-center justify-center h-full"><div class="loading-spinner mb-4"></div><p class="text-slate-400">Converting HEIC...</p></div>`;
+            html = `<div class="text-white flex flex-col items-center"><div class="loading-spinner mb-4"></div><p>Converting HEIC...</p></div>`;
             this.renderHEIC(url);
         }
 
         // --- DOCX ---
         else if (['docx'].includes(ext)) {
-            console.log('[FileViewer] Type: DOCX');
-            iconClass = 'fa-file-word';
-            html = `<div class="flex flex-col items-center justify-center h-full"><div class="loading-spinner mb-4"></div><p class="text-slate-400">Rendering Document...</p></div>`;
+            // White container, scrollable
+            html = `<div class="bg-white w-[90vw] h-[90vh] flex flex-col items-center justify-center rounded-lg shadow-2xl overflow-hidden"><div class="loading-spinner mb-4 border-blue-500"></div><p class="text-gray-500">Rendering Document...</p></div>`;
             this.renderDOCX(url);
         }
 
         // --- UNSUPPORTED ---
         else {
-            console.log('[FileViewer] Type: Unsupported');
-            iconClass = 'fa-file';
             let message = "Preview not available";
+            let iconClass = 'fa-file';
 
             if (['doc', 'xls', 'xlsx', 'ppt', 'pptx'].includes(ext)) {
                 iconClass = 'fa-file-word';
@@ -175,29 +155,99 @@ const FileViewer = {
             }
 
             html = `
-                <div class="text-center p-10 bg-slate-800 rounded-xl">
-                    <i class="fas ${iconClass} text-6xl text-slate-600 mb-4 block"></i>
-                    <p class="text-slate-300 mb-6">${message}</p>
-                    <button onclick="API.downloadFile('${file.id}', '${file.name}')" class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg font-medium transition">
-                        <i class="fas fa-download mr-2"></i> Download File
+                <div class="text-center p-10 bg-white rounded-xl shadow-2xl max-w-md">
+                    <div class="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                        <i class="fas ${iconClass} text-4xl text-gray-400"></i>
+                    </div>
+                    <h3 class="text-xl font-semibold text-gray-800 mb-2">${file.name}</h3>
+                    <p class="text-gray-500 mb-6">${message}</p>
+                    <button onclick="API.downloadFile('${file.id}', '${file.name}')" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium transition shadow-md">
+                        Download File
                     </button>
                 </div>
             `;
         }
 
-        iconEl.className = `fas ${iconClass} text-xl text-blue-500`;
         content.innerHTML = html;
 
-        console.log('[FileViewer] Removing hidden class and forcing display...');
+        // Final Display Logic
         modal.classList.remove('hidden');
         modal.style.display = 'flex';
         modal.style.zIndex = '9999';
-        modal.style.backgroundColor = 'rgba(15, 23, 42, 0.95)';
-        modal.style.border = '5px solid red'; // DEBUG: VISUAL CONFIRMATION
+    },
 
-        // Log dimensions
-        const rect = modal.getBoundingClientRect();
-        console.log('[FileViewer] Modal Dimensions:', rect.width, 'x', rect.height, 'Top:', rect.top, 'Left:', rect.left);
+    /**
+     * Setup Image Zoom Logic
+     */
+    setupImageZoom() {
+        const img = document.getElementById('viewerImage');
+        const content = document.getElementById('viewerContent');
+        if (!img) return;
+
+        let scale = 1;
+        let isDragging = false;
+        let startX = 0;
+        let startY = 0;
+        let translateX = 0;
+        let translateY = 0;
+
+        // Wheel Zoom
+        this._wheelHandler = (e) => {
+            e.preventDefault();
+            const delta = e.deltaY * -0.01;
+            const newScale = Math.min(Math.max(1, scale + delta), 4); // Min 1x, Max 4x
+
+            if (newScale !== scale) {
+                scale = newScale;
+                content.style.transform = `scale(${scale}) translate(${translateX}px, ${translateY}px)`;
+                img.style.cursor = scale > 1 ? 'grab' : 'zoom-in';
+            }
+        };
+
+        // Drag Start
+        this._mouseDownHandler = (e) => {
+            if (scale > 1) {
+                isDragging = true;
+                startX = e.clientX - translateX;
+                startY = e.clientY - translateY;
+                img.style.cursor = 'grabbing';
+            }
+        };
+
+        // Dragging
+        this._mouseMoveHandler = (e) => {
+            if (isDragging) {
+                e.preventDefault();
+                translateX = e.clientX - startX;
+                translateY = e.clientY - startY;
+                content.style.transform = `scale(${scale}) translate(${translateX}px, ${translateY}px)`;
+            }
+        };
+
+        // Drag End
+        this._mouseUpHandler = () => {
+            isDragging = false;
+            if (img) img.style.cursor = scale > 1 ? 'grab' : 'zoom-in';
+        };
+
+        content.addEventListener('wheel', this._wheelHandler);
+        content.addEventListener('mousedown', this._mouseDownHandler);
+        window.addEventListener('mousemove', this._mouseMoveHandler);
+        window.addEventListener('mouseup', this._mouseUpHandler);
+    },
+
+    /**
+     * Cleanup Zoom Listeners
+     */
+    cleanupZoom() {
+        const content = document.getElementById('viewerContent');
+        if (content) {
+            content.style.transform = 'none';
+            if (this._wheelHandler) content.removeEventListener('wheel', this._wheelHandler);
+            if (this._mouseDownHandler) content.removeEventListener('mousedown', this._mouseDownHandler);
+        }
+        if (this._mouseMoveHandler) window.removeEventListener('mousemove', this._mouseMoveHandler);
+        if (this._mouseUpHandler) window.removeEventListener('mouseup', this._mouseUpHandler);
     },
 
     /**
@@ -222,10 +272,10 @@ const FileViewer = {
             const imgUrl = URL.createObjectURL(jpgBlob);
 
             const content = document.getElementById('viewerContent');
-            content.innerHTML = `<img src="${imgUrl}" class="max-w-full max-h-full object-contain rounded shadow-lg">`;
+            // HEIC gets same zoom capability
+            content.innerHTML = `<img id="viewerImage" src="${imgUrl}" style="max-width: 90vw; max-height: 90vh; cursor: zoom-in;" class="rounded-lg shadow-2xl select-none">`;
+            requestAnimationFrame(() => this.setupImageZoom());
 
-            // Clean up later? Browser handles weak refs, but unique URL persists. 
-            // We'll leave it for session.
         } catch (error) {
             console.error('HEIC Error:', error);
             this.showError('Failed to convert HEIC image');
@@ -246,7 +296,8 @@ const FileViewer = {
 
             const content = document.getElementById('viewerContent');
             // Clear loading spinner and set container
-            content.innerHTML = `<div id="docx-container" class="docx-wrapper bg-white text-black p-8 w-full h-full overflow-auto rounded shadow-lg"></div>`;
+            // Ensure container allows scroll
+            content.innerHTML = `<div id="docx-container" class="docx-wrapper bg-white text-black p-8 w-[90vw] h-[90vh] overflow-auto rounded-lg shadow-lg"></div>`;
 
             await docx.renderAsync(blob, document.getElementById('docx-container'), null, {
                 className: "docx-content",
@@ -263,7 +314,7 @@ const FileViewer = {
      */
     showError(message) {
         document.getElementById('viewerContent').innerHTML = `
-            <div class="text-center text-red-400 p-8">
+            <div class="text-center text-red-400 p-8 bg-white rounded-lg shadow-xl">
                 <i class="fas fa-exclamation-circle text-4xl mb-4"></i>
                 <p>${message}</p>
             </div>
@@ -286,14 +337,15 @@ const FileViewer = {
                 .replace(/"/g, "&quot;")
                 .replace(/'/g, "&#039;");
 
+            // Text is already inside the white wrapper from open()
             content.innerHTML = `
-                <div class="w-full h-full p-4 overflow-auto bg-[#1e1e1e] text-slate-300 font-mono text-sm rounded">
+                <div class="w-[80vw] h-[80vh] p-4 overflow-auto bg-white text-gray-800 font-mono text-sm rounded-lg shadow-2xl">
                     <pre>${escaped}</pre>
                 </div>
             `;
         } catch (error) {
             document.getElementById('viewerContent').innerHTML = `
-                <div class="text-center text-red-400">
+                <div class="text-center text-red-400 bg-white p-4 rounded">
                     <p>Failed to load text content</p>
                 </div>
             `;
@@ -308,6 +360,8 @@ const FileViewer = {
         // Clear content to stop video/audio playing
         document.getElementById('viewerContent').innerHTML = '';
         modal.classList.add('hidden');
+        modal.style.display = 'none'; // Ensure hidden
+        this.cleanupZoom();
     }
 };
 
