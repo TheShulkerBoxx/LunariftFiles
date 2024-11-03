@@ -1,6 +1,6 @@
 /**
  * File Viewer Module
- * Handles previewing files in a modal
+ * Handles previewing files in a centered modal with consistent sizing
  */
 
 const FileViewer = {
@@ -26,31 +26,29 @@ const FileViewer = {
 
         const modal = document.createElement('div');
         modal.id = 'fileViewerModal';
-        // Flex center for lightbox feel, backdrop blur
-        modal.className = 'fixed inset-0 z-[100] hidden bg-black/90 flex items-center justify-center backdrop-blur-sm';
+        modal.className = 'file-viewer-modal';
 
-        // Force geometry
-        modal.style.position = 'fixed';
-        modal.style.top = '0';
-        modal.style.left = '0';
-        modal.style.width = '100vw';
-        modal.style.height = '100vh';
-
-        // Close when clicking empty space
+        // Close when clicking backdrop
         modal.onclick = (e) => {
-            if (e.target === modal || e.target.id === 'viewerWrapper') {
+            if (e.target === modal) {
                 this.close();
             }
         };
 
         modal.innerHTML = `
-            <div id="viewerWrapper" class="w-full h-full flex items-center justify-center p-4 relative overflow-hidden">
-                <div id="viewerContent" class="relative flex items-center justify-center pointer-events-auto transition-transform duration-100 ease-out origin-center">
+            <div id="viewerContainer" class="viewer-container">
+                <button id="closeViewerBtn" class="close-viewer-btn" title="Close (Esc)">
+                    <i class="fas fa-times"></i>
+                </button>
+                <div id="viewerContent" class="viewer-content">
                     <!-- Dynamic Content -->
                 </div>
             </div>
         `;
         document.body.appendChild(modal);
+
+        // Close button handler
+        document.getElementById('closeViewerBtn').onclick = () => this.close();
     },
 
     /**
@@ -77,126 +75,169 @@ const FileViewer = {
 
         // --- IMAGES ---
         if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'ico', 'bmp'].includes(ext)) {
-            // Constrain image to 90vw/90vh, allow object-contain to keep aspect ratio
-            // ID 'viewerImage' for zoom logic
-            html = `<img id="viewerImage" src="${url}" style="max-width: 90vw; max-height: 90vh; cursor: zoom-in;" class="rounded-lg shadow-2xl select-none" alt="${file.name}">`;
-
-            // Wait for render then setup zoom
+            html = `<img id="viewerImage" src="${url}" class="viewer-image" alt="${file.name}">`;
+            content.innerHTML = html;
             requestAnimationFrame(() => this.setupImageZoom());
         }
 
         // --- VIDEO ---
         else if (['mp4', 'webm', 'mov', 'mkv'].includes(ext)) {
             html = `
-                <video controls autoplay style="max-width: 90vw; max-height: 90vh;" class="rounded-lg shadow-2xl outline-none bg-black">
+                <video controls autoplay class="viewer-video">
                     <source src="${url}" type="video/mp4">
                     Your browser does not support the video tag.
                 </video>
             `;
+            content.innerHTML = html;
         }
 
         // --- AUDIO ---
         else if (['mp3', 'wav', 'ogg', 'flac'].includes(ext)) {
             html = `
-                <div class="bg-white p-8 rounded-xl shadow-2xl flex flex-col items-center gap-4 min-w-[300px]">
-                    <div class="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center">
-                        <i class="fas fa-music text-3xl text-blue-500"></i>
+                <div class="viewer-audio">
+                    <div class="audio-icon">
+                        <i class="fas fa-music"></i>
                     </div>
-                    <h3 class="text-gray-800 font-medium">${file.name}</h3>
-                    <audio controls autoplay class="w-full">
+                    <h3 class="audio-filename">${file.name}</h3>
+                    <audio controls autoplay>
                         <source src="${url}" type="audio/mpeg">
+                        Your browser does not support the audio tag.
                     </audio>
                 </div>
             `;
+            content.innerHTML = html;
         }
 
         // --- PDF ---
         else if (ext === 'pdf') {
             html = `
-                <div class="bg-white w-[90vw] h-[90vh] rounded-lg shadow-2xl overflow-hidden relative">
-                    <object data="${url}" type="application/pdf" class="w-full h-full">
-                        <div class="flex flex-col items-center justify-center h-full text-slate-500">
-                            <p class="mb-4">Unable to display PDF directly.</p>
-                            <a href="${url}" class="text-blue-600 hover:text-blue-800 underline">Click to download</a>
+                <div class="viewer-document">
+                    <object data="${url}" type="application/pdf" class="viewer-pdf">
+                        <div class="viewer-fallback">
+                            <p>Unable to display PDF directly.</p>
+                            <a href="${url}" class="download-link">Click to download</a>
                         </div>
                     </object>
                 </div>
             `;
+            content.innerHTML = html;
         }
 
-        // --- TXT / CODE ---
+        // --- TEXT FILES ---
         else if (['txt', 'md', 'json', 'js', 'css', 'html', 'xml', 'log', 'ini', 'conf', 'yml', 'yaml', 'sh', 'env'].includes(ext)) {
-            // White container, scrollable
-            html = `<div class="bg-white w-[80vw] h-[80vh] flex flex-col items-center justify-center rounded-lg shadow-2xl overflow-hidden"><div class="loading-spinner mb-4 border-blue-500"></div><p class="text-gray-500">Loading text...</p></div>`;
+            html = `
+                <div class="viewer-document">
+                    <div class="viewer-loading">
+                        <i class="fas fa-spinner fa-spin"></i>
+                        <p>Loading text...</p>
+                    </div>
+                </div>
+            `;
+            content.innerHTML = html;
             this.fetchTextContent(url);
         }
 
         // --- HEIC ---
         else if (['heic', 'heif'].includes(ext)) {
-            html = `<div class="text-white flex flex-col items-center"><div class="loading-spinner mb-4"></div><p>Converting HEIC...</p></div>`;
+            html = `
+                <div class="viewer-loading">
+                    <i class="fas fa-spinner fa-spin"></i>
+                    <p>Converting HEIC image...</p>
+                </div>
+            `;
+            content.innerHTML = html;
             this.renderHEIC(url);
         }
 
         // --- DOCX ---
         else if (['docx'].includes(ext)) {
-            // White container, scrollable
-            html = `<div class="bg-white w-[90vw] h-[90vh] flex flex-col items-center justify-center rounded-lg shadow-2xl overflow-hidden"><div class="loading-spinner mb-4 border-blue-500"></div><p class="text-gray-500">Rendering Document...</p></div>`;
+            html = `
+                <div class="viewer-document">
+                    <div class="viewer-loading">
+                        <i class="fas fa-spinner fa-spin"></i>
+                        <p>Loading document...</p>
+                    </div>
+                </div>
+            `;
+            content.innerHTML = html;
             this.renderDOCX(url);
         }
 
         // --- UNSUPPORTED ---
         else {
-            let message = "Preview not available";
-            let iconClass = 'fa-file';
-
-            if (['doc', 'xls', 'xlsx', 'ppt', 'pptx'].includes(ext)) {
-                iconClass = 'fa-file-word';
-                message = "This document format cannot be previewed directly.";
-            }
-
             html = `
-                <div class="text-center p-10 bg-white rounded-xl shadow-2xl max-w-md">
-                    <div class="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-6">
-                        <i class="fas ${iconClass} text-4xl text-gray-400"></i>
-                    </div>
-                    <h3 class="text-xl font-semibold text-gray-800 mb-2">${file.name}</h3>
-                    <p class="text-gray-500 mb-6">${message}</p>
-                    <button onclick="API.downloadFile('${file.id}', '${file.name}')" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium transition shadow-md">
-                        Download File
-                    </button>
+                <div class="viewer-unsupported">
+                    <i class="fas fa-file"></i>
+                    <p>Preview not available for this file type</p>
+                    <a href="${API.getDownloadURL(file.id, false)}" class="download-button">
+                        <i class="fas fa-download"></i> Download File
+                    </a>
                 </div>
             `;
+            content.innerHTML = html;
         }
 
-        content.innerHTML = html;
-
-        // Final Display Logic
-        modal.classList.remove('hidden');
+        // Show modal
         modal.style.display = 'flex';
-        modal.style.zIndex = '9999';
     },
 
     /**
-     * Setup Image Zoom Logic
+     * Close the viewer
+     */
+    close() {
+        const modal = document.getElementById('fileViewerModal');
+        if (modal) {
+            modal.style.display = 'none';
+            this.cleanupZoom();
+        }
+    },
+
+    /**
+     * Fetch text content from URL
+     */
+    fetchTextContent(url) {
+        const content = document.getElementById('viewerContent');
+        
+        fetch(url)
+            .then(res => res.text())
+            .then(text => {
+                content.innerHTML = `
+                    <div class="viewer-document">
+                        <pre class="viewer-text">${this.escapeHtml(text)}</pre>
+                    </div>
+                `;
+            })
+            .catch(error => {
+                console.error('Text loading error:', error);
+                this.showError('Failed to load text file');
+            });
+    },
+
+    /**
+     * Setup image zoom functionality
      */
     setupImageZoom() {
-        const img = document.getElementById('viewerImage');
         const content = document.getElementById('viewerContent');
+        const img = document.getElementById('viewerImage');
+        
         if (!img) return;
 
         let scale = 1;
+        let translateX = 0;
+        let translateY = 0;
         let isDragging = false;
         let startX = 0;
         let startY = 0;
-        let translateX = 0;
-        let translateY = 0;
+        const maxZoom = 5;
+        const minZoom = 1;
+        const zoomStep = 0.2;
 
         // Wheel Zoom
         this._wheelHandler = (e) => {
             e.preventDefault();
-            const delta = e.deltaY * -0.01;
-            const newScale = Math.min(Math.max(1, scale + delta), 4); // Min 1x, Max 4x
-
+            const delta = e.deltaY > 0 ? -zoomStep : zoomStep;
+            const newScale = Math.max(minZoom, Math.min(maxZoom, scale + delta));
+            
             if (newScale !== scale) {
                 scale = newScale;
                 content.style.transform = `scale(${scale}) translate(${translateX}px, ${translateY}px)`;
@@ -237,7 +278,7 @@ const FileViewer = {
     },
 
     /**
-     * Cleanup Zoom Listeners
+     * Cleanup zoom listeners
      */
     cleanupZoom() {
         const content = document.getElementById('viewerContent');
@@ -254,6 +295,8 @@ const FileViewer = {
      * Render HEIC image
      */
     async renderHEIC(url) {
+        const content = document.getElementById('viewerContent');
+        
         try {
             if (!window.heic2any) {
                 throw new Error('HEIC library not loaded');
@@ -271,9 +314,7 @@ const FileViewer = {
             const jpgBlob = Array.isArray(conversionResult) ? conversionResult[0] : conversionResult;
             const imgUrl = URL.createObjectURL(jpgBlob);
 
-            const content = document.getElementById('viewerContent');
-            // HEIC gets same zoom capability
-            content.innerHTML = `<img id="viewerImage" src="${imgUrl}" style="max-width: 90vw; max-height: 90vh; cursor: zoom-in;" class="rounded-lg shadow-2xl select-none">`;
+            content.innerHTML = `<img id="viewerImage" src="${imgUrl}" class="viewer-image" alt="HEIC Image">`;
             requestAnimationFrame(() => this.setupImageZoom());
 
         } catch (error) {
@@ -286,6 +327,8 @@ const FileViewer = {
      * Render DOCX document
      */
     async renderDOCX(url) {
+        const content = document.getElementById('viewerContent');
+        
         try {
             if (!window.docx) {
                 throw new Error('DOCX library not loaded');
@@ -294,78 +337,38 @@ const FileViewer = {
             const res = await fetch(url);
             const blob = await res.blob();
 
-            const content = document.getElementById('viewerContent');
-            // Clear loading spinner and set container
-            // Ensure container allows scroll
-            content.innerHTML = `<div id="docx-container" class="docx-wrapper bg-white text-black p-8 w-[90vw] h-[90vh] overflow-auto rounded-lg shadow-lg"></div>`;
+            content.innerHTML = `<div id="docx-container" class="viewer-document viewer-docx"></div>`;
+            
+            const container = document.getElementById('docx-container');
+            await docx.renderAsync(blob, container);
 
-            await docx.renderAsync(blob, document.getElementById('docx-container'), null, {
-                className: "docx-content",
-                inWrapper: false
-            });
         } catch (error) {
             console.error('DOCX Error:', error);
-            this.showError('Failed to render DOCX document');
+            this.showError('Failed to load DOCX document');
         }
     },
 
     /**
-     * Show Error Message
+     * Show error message
      */
     showError(message) {
-        document.getElementById('viewerContent').innerHTML = `
-            <div class="text-center text-red-400 p-8 bg-white rounded-lg shadow-xl">
-                <i class="fas fa-exclamation-circle text-4xl mb-4"></i>
-                <p>${message}</p>
-            </div>
-        `;
-    },
-
-    /**
-     * Fetch and display text content
-     */
-    async fetchTextContent(url) {
-        try {
-            const res = await fetch(url);
-            const text = await res.text();
-            const content = document.getElementById('viewerContent');
-
-            // Simple escaping
-            const escaped = text.replace(/&/g, "&amp;")
-                .replace(/</g, "&lt;")
-                .replace(/>/g, "&gt;")
-                .replace(/"/g, "&quot;")
-                .replace(/'/g, "&#039;");
-
-            // Text is already inside the white wrapper from open()
+        const content = document.getElementById('viewerContent');
+        if (content) {
             content.innerHTML = `
-                <div class="w-[80vw] h-[80vh] p-4 overflow-auto bg-white text-gray-800 font-mono text-sm rounded-lg shadow-2xl">
-                    <pre>${escaped}</pre>
-                </div>
-            `;
-        } catch (error) {
-            document.getElementById('viewerContent').innerHTML = `
-                <div class="text-center text-red-400 bg-white p-4 rounded">
-                    <p>Failed to load text content</p>
+                <div class="viewer-error">
+                    <i class="fas fa-exclamation-circle"></i>
+                    <p>${message}</p>
                 </div>
             `;
         }
     },
 
     /**
-     * Close the viewer
+     * Escape HTML for text display
      */
-    close() {
-        const modal = document.getElementById('fileViewerModal');
-        // Clear content to stop video/audio playing
-        document.getElementById('viewerContent').innerHTML = '';
-        modal.classList.add('hidden');
-        modal.style.display = 'none'; // Ensure hidden
-        this.cleanupZoom();
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
     }
 };
-
-// Initialize
-document.addEventListener('DOMContentLoaded', () => {
-    FileViewer.init();
-});
