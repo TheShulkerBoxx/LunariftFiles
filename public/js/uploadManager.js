@@ -219,6 +219,14 @@ const UploadManager = {
             upload.progress = 100;
             this.updateUI();
 
+            // Auto-remove after 10 seconds
+            setTimeout(() => {
+                if (AppState.uploads.active.has(item.id)) {
+                    AppState.uploads.active.delete(item.id);
+                    this.updateUI();
+                }
+            }, 10000);
+
             return result;
         } catch (error) {
             if (AppState.uploads.cancelled) {
@@ -351,7 +359,7 @@ const UploadManager = {
                 <div class="upload-item">
                     <div class="upload-item-header">
                         <span class="status-icon ${statusClass}">${statusIcon}</span>
-                        <span class="upload-item-name" title="${upload.name}">${upload.name}</span>
+                        <span class="upload-item-name" title="${upload.path}${upload.name}">${upload.name}</span>
                         <span class="upload-item-size">${UI.formatBytes(upload.size)}</span>
                     </div>
                     <div class="upload-progress-bar">
