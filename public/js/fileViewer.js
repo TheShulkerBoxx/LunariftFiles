@@ -1,21 +1,44 @@
 /**
  * File Viewer Module
- * Handles previewing files in a centered modal with consistent sizing
+ * Handles previewing files in a centered modal with pre-fetching and gallery navigation
  */
 
 const FileViewer = {
+    // Cache for pre-fetched file blobs
+    cache: new Map(),
+    // Current file being viewed
+    currentFile: null,
+    // List of viewable files in current directory
+    viewableFiles: [],
+    // Current index in viewable files
+    currentIndex: -1,
+
     /**
      * Initialize the viewer
      */
     init() {
         this.createViewerModal();
 
-        // Close on Escape key
+        // Keyboard navigation
         document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') {
-                this.close();
+            if (this.isOpen()) {
+                if (e.key === 'Escape') {
+                    this.close();
+                } else if (e.key === 'ArrowLeft') {
+                    this.navigatePrev();
+                } else if (e.key === 'ArrowRight') {
+                    this.navigateNext();
+                }
             }
         });
+    },
+
+    /**
+     * Check if viewer is open
+     */
+    isOpen() {
+        const modal = document.getElementById('fileViewerModal');
+        return modal && modal.style.display === 'flex';
     },
 
     /**
@@ -30,16 +53,31 @@ const FileViewer = {
 
         // Close when clicking backdrop
         modal.onclick = (e) => {
-            if (e.target === modal) {
+            if (e.target === modal || e.target.id === 'viewerContainer') {
                 this.close();
             }
         };
 
         modal.innerHTML = `
+            <div class="viewer-header">
+                <span id="viewerFilename" class="viewer-filename"></span>
+                <div class="viewer-controls">
+                    <span id="viewerCounter" class="viewer-counter"></span>
+                    <button id="viewerDownloadBtn" class="viewer-control-btn" title="Download">
+                        <i class="fas fa-download"></i>
+                    </button>
+                    <button id="viewerCloseBtn" class="viewer-control-btn close-btn" title="Close (Esc)">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            </div>
+            <button id="viewerPrevBtn" class="viewer-nav prev" title="Previous (Left Arrow)">
+                <i class="fas fa-chevron-left"></i>
+            </button>
+            <button id="viewerNextBtn" class="viewer-nav next" title="Next (Right Arrow)">
+                <i class="fas fa-chevron-right"></i>
+            </button>
             <div id="viewerContainer" class="viewer-container">
-                <button id="closeViewerBtn" class="close-viewer-btn" title="Close (Esc)">
-                    <i class="fas fa-times"></i>
-                </button>
                 <div id="viewerContent" class="viewer-content">
                     <!-- Dynamic Content -->
                 </div>
@@ -47,8 +85,103 @@ const FileViewer = {
         `;
         document.body.appendChild(modal);
 
-        // Close button handler
-        document.getElementById('closeViewerBtn').onclick = () => this.close();
+        // Event handlers
+        document.getElementById('viewerCloseBtn').onclick = () => this.close();
+        document.getElementById('viewerDownloadBtn').onclick = () => this.downloadCurrent();
+        document.getElementById('viewerPrevBtn').onclick = () => this.navigatePrev();
+        document.getElementById('viewerNextBtn').onclick = () => this.navigateNext();
+    },
+
+    /**
+     * Get supported file types for preview
+     */
+    getSupportedExtensions() {
+        return [
+            // Images
+            'jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'ico', 'bmp', 'heic', 'heif',
+            // Video
+            'mp4', 'webm', 'mov', 'mkv',
+            // Audio
+            'mp3', 'wav', 'ogg', 'flac',
+            // Documents
+            'pdf', 'txt', 'md', 'json', 'js', 'css', 'html', 'xml', 'log', 'ini',
+            'conf', 'yml', 'yaml', 'sh', 'env', 'docx'
+        ];
+    },
+
+    /**
+     * Check if file is viewable
+     */
+    isViewable(filename) {
+        const ext = filename.split('.').pop().toLowerCase();
+        return this.getSupportedExtensions().includes(ext);
+    },
+
+    /**
+     * Pre-fetch files in the current directory for instant viewing
+     * Called when files are loaded/rendered
+     */
+    prefetchCurrentDirectory() {
+        const files = AppState.getCurrentFiles();
+        const viewable = files.filter(f => this.isViewable(f.name) && f.status !== 'PENDING');
+
+        // Clear old cache entries not in current directory
+        const currentIds = new Set(viewable.map(f => f.id));
+        for (const [id] of this.cache) {
+            if (!currentIds.has(id)) {
+                this.cache.delete(id);
+            }
+        }
+
+        // Pre-fetch small files (under 5MB) for instant viewing
+        viewable.forEach(file => {
+            if (!this.cache.has(file.id) && file.size < 5 * 1024 * 1024) {
+                this.prefetchFile(file);
+            }
+        });
+
+        // Store viewable files list for navigation
+        this.viewableFiles = viewable;
+    },
+
+    /**
+     * Pre-fetch a single file
+     */
+    async prefetchFile(file) {
+        try {
+            const url = API.getDownloadURL(file.id, true);
+            const response = await fetch(url);
+            if (response.ok) {
+                const blob = await response.blob();
+                this.cache.set(file.id, {
+                    blob,
+                    url: URL.createObjectURL(blob),
+                    timestamp: Date.now()
+                });
+            }
+        } catch (error) {
+            // Silently fail - file will be fetched on demand
+            console.debug(`[FileViewer] Prefetch failed for ${file.name}:`, error.message);
+        }
+    },
+
+    /**
+     * Get file URL (from cache or generate new)
+     */
+    getFileURL(file, inline = true) {
+        const cached = this.cache.get(file.id);
+        if (cached) {
+            return cached.url;
+        }
+        return API.getDownloadURL(file.id, inline);
+    },
+
+    /**
+     * Get cached blob for a file
+     */
+    getCachedBlob(fileId) {
+        const cached = this.cache.get(fileId);
+        return cached ? cached.blob : null;
     },
 
     /**
@@ -65,120 +198,199 @@ const FileViewer = {
             return;
         }
 
-        // Reset Zoom
-        this.cleanupZoom();
+        // Store current file
+        this.currentFile = file;
 
-        // Determine type
+        // Find index in viewable files
+        this.currentIndex = this.viewableFiles.findIndex(f => f.id === file.id);
+
+        // Reset zoom and content
+        this.cleanupZoom();
+        content.innerHTML = '';
+
+        // Update header
+        this.updateHeader();
+        this.updateNavigation();
+
+        // Render content based on type
+        this.renderFile(file);
+
+        // Show modal
+        modal.style.display = 'flex';
+        document.body.style.overflow = 'hidden';
+    },
+
+    /**
+     * Update the header with filename and counter
+     */
+    updateHeader() {
+        document.getElementById('viewerFilename').textContent = this.currentFile.name;
+
+        const counter = document.getElementById('viewerCounter');
+        if (this.viewableFiles.length > 1 && this.currentIndex >= 0) {
+            counter.textContent = `${this.currentIndex + 1} / ${this.viewableFiles.length}`;
+            counter.style.display = 'block';
+        } else {
+            counter.style.display = 'none';
+        }
+    },
+
+    /**
+     * Update navigation buttons
+     */
+    updateNavigation() {
+        const prevBtn = document.getElementById('viewerPrevBtn');
+        const nextBtn = document.getElementById('viewerNextBtn');
+
+        const hasMultiple = this.viewableFiles.length > 1;
+        prevBtn.style.display = hasMultiple ? 'flex' : 'none';
+        nextBtn.style.display = hasMultiple ? 'flex' : 'none';
+
+        if (hasMultiple) {
+            prevBtn.disabled = this.currentIndex <= 0;
+            nextBtn.disabled = this.currentIndex >= this.viewableFiles.length - 1;
+        }
+    },
+
+    /**
+     * Navigate to previous file
+     */
+    navigatePrev() {
+        if (this.currentIndex > 0) {
+            const prevFile = this.viewableFiles[this.currentIndex - 1];
+            this.open(prevFile);
+        }
+    },
+
+    /**
+     * Navigate to next file
+     */
+    navigateNext() {
+        if (this.currentIndex < this.viewableFiles.length - 1) {
+            const nextFile = this.viewableFiles[this.currentIndex + 1];
+            this.open(nextFile);
+        }
+    },
+
+    /**
+     * Download current file
+     */
+    downloadCurrent() {
+        if (this.currentFile) {
+            API.downloadFile(this.currentFile.id, this.currentFile.name);
+        }
+    },
+
+    /**
+     * Render file content based on type
+     */
+    renderFile(file) {
+        const content = document.getElementById('viewerContent');
         const ext = file.name.split('.').pop().toLowerCase();
-        let html = '';
-        const url = API.getDownloadURL(file.id, true);
+        const url = this.getFileURL(file, true);
 
         // --- IMAGES ---
         if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'ico', 'bmp'].includes(ext)) {
-            html = `<img id="viewerImage" src="${url}" class="viewer-image" alt="${file.name}">`;
-            content.innerHTML = html;
-            requestAnimationFrame(() => this.setupImageZoom());
+            content.innerHTML = `<img id="viewerImage" src="${url}" class="viewer-image" alt="${file.name}">`;
+            const img = document.getElementById('viewerImage');
+            img.onload = () => this.setupImageZoom();
+            img.onerror = () => this.showError('Failed to load image');
         }
 
         // --- VIDEO ---
         else if (['mp4', 'webm', 'mov', 'mkv'].includes(ext)) {
-            html = `
+            content.innerHTML = `
                 <video controls autoplay class="viewer-video">
-                    <source src="${url}" type="video/mp4">
+                    <source src="${url}" type="video/${ext === 'mov' ? 'quicktime' : ext}">
                     Your browser does not support the video tag.
                 </video>
             `;
-            content.innerHTML = html;
         }
 
         // --- AUDIO ---
         else if (['mp3', 'wav', 'ogg', 'flac'].includes(ext)) {
-            html = `
+            content.innerHTML = `
                 <div class="viewer-audio">
                     <div class="audio-icon">
                         <i class="fas fa-music"></i>
                     </div>
                     <h3 class="audio-filename">${file.name}</h3>
                     <audio controls autoplay>
-                        <source src="${url}" type="audio/mpeg">
+                        <source src="${url}" type="audio/${ext === 'mp3' ? 'mpeg' : ext}">
                         Your browser does not support the audio tag.
                     </audio>
                 </div>
             `;
-            content.innerHTML = html;
         }
 
         // --- PDF ---
         else if (ext === 'pdf') {
-            html = `
-                <div class="viewer-document">
-                    <object data="${url}" type="application/pdf" class="viewer-pdf">
+            content.innerHTML = `
+                <div class="viewer-pdf-container">
+                    <iframe src="${url}#toolbar=1&navpanes=0&scrollbar=1&view=FitH" class="viewer-pdf" type="application/pdf">
                         <div class="viewer-fallback">
-                            <p>Unable to display PDF directly.</p>
-                            <a href="${url}" class="download-link">Click to download</a>
+                            <p>Unable to display PDF.</p>
+                            <a href="${url}" class="download-link" target="_blank">Open in new tab</a>
                         </div>
-                    </object>
+                    </iframe>
                 </div>
             `;
-            content.innerHTML = html;
         }
 
         // --- TEXT FILES ---
         else if (['txt', 'md', 'json', 'js', 'css', 'html', 'xml', 'log', 'ini', 'conf', 'yml', 'yaml', 'sh', 'env'].includes(ext)) {
-            html = `
+            content.innerHTML = `
                 <div class="viewer-document">
-                    <div class="viewer-loading">
-                        <i class="fas fa-spinner fa-spin"></i>
-                        <p>Loading text...</p>
+                    <div class="viewer-document-inner">
+                        <div class="viewer-loading">
+                            <i class="fas fa-spinner fa-spin"></i>
+                            <p>Loading...</p>
+                        </div>
                     </div>
                 </div>
             `;
-            content.innerHTML = html;
-            this.fetchTextContent(url);
+            this.fetchTextContent(file);
         }
 
         // --- HEIC ---
         else if (['heic', 'heif'].includes(ext)) {
-            html = `
+            content.innerHTML = `
                 <div class="viewer-loading">
                     <i class="fas fa-spinner fa-spin"></i>
                     <p>Converting HEIC image...</p>
                 </div>
             `;
-            content.innerHTML = html;
-            this.renderHEIC(url);
+            this.renderHEIC(file);
         }
 
         // --- DOCX ---
-        else if (['docx'].includes(ext)) {
-            html = `
-                <div class="viewer-document">
+        else if (ext === 'docx') {
+            content.innerHTML = `
+                <div class="viewer-docx-container">
                     <div class="viewer-loading">
                         <i class="fas fa-spinner fa-spin"></i>
                         <p>Loading document...</p>
                     </div>
                 </div>
             `;
-            content.innerHTML = html;
-            this.renderDOCX(url);
+            this.renderDOCX(file);
         }
 
         // --- UNSUPPORTED ---
         else {
-            html = `
+            content.innerHTML = `
                 <div class="viewer-unsupported">
-                    <i class="fas fa-file"></i>
+                    <div class="file-icon">
+                        <i class="fas fa-file"></i>
+                    </div>
+                    <h3>${file.name}</h3>
                     <p>Preview not available for this file type</p>
                     <a href="${API.getDownloadURL(file.id, false)}" class="download-button">
                         <i class="fas fa-download"></i> Download File
                     </a>
                 </div>
             `;
-            content.innerHTML = html;
         }
-
-        // Show modal
-        modal.style.display = 'flex';
     },
 
     /**
@@ -188,29 +400,42 @@ const FileViewer = {
         const modal = document.getElementById('fileViewerModal');
         if (modal) {
             modal.style.display = 'none';
+            document.body.style.overflow = '';
             this.cleanupZoom();
+            this.currentFile = null;
+
+            // Pause any playing media
+            const video = modal.querySelector('video');
+            const audio = modal.querySelector('audio');
+            if (video) video.pause();
+            if (audio) audio.pause();
         }
     },
 
     /**
      * Fetch text content from URL
      */
-    fetchTextContent(url) {
+    async fetchTextContent(file) {
         const content = document.getElementById('viewerContent');
-        
-        fetch(url)
-            .then(res => res.text())
-            .then(text => {
-                content.innerHTML = `
-                    <div class="viewer-document">
-                        <pre class="viewer-text">${this.escapeHtml(text)}</pre>
-                    </div>
-                `;
-            })
-            .catch(error => {
-                console.error('Text loading error:', error);
-                this.showError('Failed to load text file');
-            });
+        const inner = content.querySelector('.viewer-document-inner');
+
+        try {
+            // Try cache first
+            let text;
+            const cached = this.getCachedBlob(file.id);
+            if (cached) {
+                text = await cached.text();
+            } else {
+                const url = this.getFileURL(file, true);
+                const res = await fetch(url);
+                text = await res.text();
+            }
+
+            inner.innerHTML = `<pre class="viewer-text">${this.escapeHtml(text)}</pre>`;
+        } catch (error) {
+            console.error('Text loading error:', error);
+            this.showError('Failed to load text file');
+        }
     },
 
     /**
@@ -219,7 +444,7 @@ const FileViewer = {
     setupImageZoom() {
         const content = document.getElementById('viewerContent');
         const img = document.getElementById('viewerImage');
-        
+
         if (!img) return;
 
         let scale = 1;
@@ -230,16 +455,35 @@ const FileViewer = {
         let startY = 0;
         const maxZoom = 5;
         const minZoom = 1;
-        const zoomStep = 0.2;
+        const zoomStep = 0.25;
+
+        // Double-click to toggle zoom
+        img.ondblclick = (e) => {
+            e.preventDefault();
+            if (scale === 1) {
+                scale = 2;
+                img.style.cursor = 'grab';
+            } else {
+                scale = 1;
+                translateX = 0;
+                translateY = 0;
+                img.style.cursor = 'zoom-in';
+            }
+            content.style.transform = `scale(${scale}) translate(${translateX}px, ${translateY}px)`;
+        };
 
         // Wheel Zoom
         this._wheelHandler = (e) => {
             e.preventDefault();
             const delta = e.deltaY > 0 ? -zoomStep : zoomStep;
             const newScale = Math.max(minZoom, Math.min(maxZoom, scale + delta));
-            
+
             if (newScale !== scale) {
                 scale = newScale;
+                if (scale === 1) {
+                    translateX = 0;
+                    translateY = 0;
+                }
                 content.style.transform = `scale(${scale}) translate(${translateX}px, ${translateY}px)`;
                 img.style.cursor = scale > 1 ? 'grab' : 'zoom-in';
             }
@@ -249,9 +493,10 @@ const FileViewer = {
         this._mouseDownHandler = (e) => {
             if (scale > 1) {
                 isDragging = true;
-                startX = e.clientX - translateX;
-                startY = e.clientY - translateY;
+                startX = e.clientX - translateX * scale;
+                startY = e.clientY - translateY * scale;
                 img.style.cursor = 'grabbing';
+                e.preventDefault();
             }
         };
 
@@ -259,8 +504,8 @@ const FileViewer = {
         this._mouseMoveHandler = (e) => {
             if (isDragging) {
                 e.preventDefault();
-                translateX = e.clientX - startX;
-                translateY = e.clientY - startY;
+                translateX = (e.clientX - startX) / scale;
+                translateY = (e.clientY - startY) / scale;
                 content.style.transform = `scale(${scale}) translate(${translateX}px, ${translateY}px)`;
             }
         };
@@ -271,8 +516,8 @@ const FileViewer = {
             if (img) img.style.cursor = scale > 1 ? 'grab' : 'zoom-in';
         };
 
-        content.addEventListener('wheel', this._wheelHandler);
-        content.addEventListener('mousedown', this._mouseDownHandler);
+        content.addEventListener('wheel', this._wheelHandler, { passive: false });
+        img.addEventListener('mousedown', this._mouseDownHandler);
         window.addEventListener('mousemove', this._mouseMoveHandler);
         window.addEventListener('mouseup', this._mouseUpHandler);
     },
@@ -285,7 +530,10 @@ const FileViewer = {
         if (content) {
             content.style.transform = 'none';
             if (this._wheelHandler) content.removeEventListener('wheel', this._wheelHandler);
-            if (this._mouseDownHandler) content.removeEventListener('mousedown', this._mouseDownHandler);
+        }
+        const img = document.getElementById('viewerImage');
+        if (img && this._mouseDownHandler) {
+            img.removeEventListener('mousedown', this._mouseDownHandler);
         }
         if (this._mouseMoveHandler) window.removeEventListener('mousemove', this._mouseMoveHandler);
         if (this._mouseUpHandler) window.removeEventListener('mouseup', this._mouseUpHandler);
@@ -294,28 +542,33 @@ const FileViewer = {
     /**
      * Render HEIC image
      */
-    async renderHEIC(url) {
+    async renderHEIC(file) {
         const content = document.getElementById('viewerContent');
-        
+
         try {
             if (!window.heic2any) {
                 throw new Error('HEIC library not loaded');
             }
 
-            const res = await fetch(url);
-            const blob = await res.blob();
+            let blob = this.getCachedBlob(file.id);
+            if (!blob) {
+                const url = this.getFileURL(file, true);
+                const res = await fetch(url);
+                blob = await res.blob();
+            }
 
             const conversionResult = await heic2any({
                 blob,
                 toType: "image/jpeg",
-                quality: 0.8
+                quality: 0.9
             });
 
             const jpgBlob = Array.isArray(conversionResult) ? conversionResult[0] : conversionResult;
             const imgUrl = URL.createObjectURL(jpgBlob);
 
             content.innerHTML = `<img id="viewerImage" src="${imgUrl}" class="viewer-image" alt="HEIC Image">`;
-            requestAnimationFrame(() => this.setupImageZoom());
+            const img = document.getElementById('viewerImage');
+            img.onload = () => this.setupImageZoom();
 
         } catch (error) {
             console.error('HEIC Error:', error);
@@ -326,25 +579,42 @@ const FileViewer = {
     /**
      * Render DOCX document
      */
-    async renderDOCX(url) {
+    async renderDOCX(file) {
         const content = document.getElementById('viewerContent');
-        
+
         try {
             if (!window.docx) {
                 throw new Error('DOCX library not loaded');
             }
 
-            const res = await fetch(url);
-            const blob = await res.blob();
+            let blob = this.getCachedBlob(file.id);
+            if (!blob) {
+                const url = this.getFileURL(file, true);
+                const res = await fetch(url);
+                blob = await res.blob();
+            }
 
-            content.innerHTML = `<div id="docx-container" class="viewer-document viewer-docx"></div>`;
-            
-            const container = document.getElementById('docx-container');
-            await docx.renderAsync(blob, container);
+            content.innerHTML = `
+                <div class="viewer-docx-container">
+                    <div id="docx-render" class="viewer-docx"></div>
+                </div>
+            `;
+
+            const container = document.getElementById('docx-render');
+            await docx.renderAsync(blob, container, null, {
+                className: 'docx-content',
+                inWrapper: false,
+                ignoreWidth: false,
+                ignoreHeight: false,
+                renderHeaders: true,
+                renderFooters: true,
+                renderFootnotes: true,
+                renderEndnotes: true
+            });
 
         } catch (error) {
             console.error('DOCX Error:', error);
-            this.showError('Failed to load DOCX document');
+            this.showError('Failed to load document');
         }
     },
 
@@ -358,6 +628,9 @@ const FileViewer = {
                 <div class="viewer-error">
                     <i class="fas fa-exclamation-circle"></i>
                     <p>${message}</p>
+                    <button onclick="FileViewer.close()" class="download-button" style="background: #64748b;">
+                        <i class="fas fa-times"></i> Close
+                    </button>
                 </div>
             `;
         }

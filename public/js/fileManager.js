@@ -5,16 +5,218 @@
 
 const FileManager = {
     /**
+     * Get appropriate Font Awesome icon class and color for a file based on its extension
+     * @param {string} filename - The name of the file
+     * @returns {object} - Object with icon class and color class
+     */
+    getFileIcon(filename) {
+        const ext = filename.split('.').pop().toLowerCase();
+
+        // Image files
+        if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico', 'tiff'].includes(ext)) {
+            return { icon: 'fa-file-image', color: 'text-green-500' };
+        }
+
+        // Video files
+        if (['mp4', 'webm', 'mov', 'mkv', 'avi', 'wmv', 'flv', 'm4v'].includes(ext)) {
+            return { icon: 'fa-file-video', color: 'text-purple-500' };
+        }
+
+        // Audio files
+        if (['mp3', 'wav', 'ogg', 'flac', 'aac', 'm4a', 'wma'].includes(ext)) {
+            return { icon: 'fa-file-audio', color: 'text-pink-500' };
+        }
+
+        // PDF files
+        if (ext === 'pdf') {
+            return { icon: 'fa-file-pdf', color: 'text-red-500' };
+        }
+
+        // Word documents
+        if (['doc', 'docx', 'odt', 'rtf'].includes(ext)) {
+            return { icon: 'fa-file-word', color: 'text-blue-500' };
+        }
+
+        // Excel spreadsheets
+        if (['xls', 'xlsx', 'ods', 'csv'].includes(ext)) {
+            return { icon: 'fa-file-excel', color: 'text-green-600' };
+        }
+
+        // PowerPoint presentations
+        if (['ppt', 'pptx', 'odp'].includes(ext)) {
+            return { icon: 'fa-file-powerpoint', color: 'text-orange-500' };
+        }
+
+        // Code files
+        if (['js', 'ts', 'jsx', 'tsx', 'py', 'java', 'cpp', 'c', 'h', 'hpp', 'cs', 'go', 'rb', 'php', 'swift', 'kt', 'rs', 'scala', 'vue', 'html', 'css', 'scss', 'sass', 'less', 'json', 'xml', 'yaml', 'yml', 'sql', 'sh', 'bash', 'ps1', 'bat'].includes(ext)) {
+            return { icon: 'fa-file-code', color: 'text-yellow-500' };
+        }
+
+        // Archive files
+        if (['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz', 'tgz'].includes(ext)) {
+            return { icon: 'fa-file-archive', color: 'text-amber-600' };
+        }
+
+        // Text files
+        if (['txt', 'md', 'log', 'ini', 'cfg', 'conf'].includes(ext)) {
+            return { icon: 'fa-file-alt', color: 'text-gray-400' };
+        }
+
+        // Default
+        return { icon: 'fa-file', color: 'text-gray-400' };
+    },
+
+    /**
      * Initialize file manager
      */
     init() {
         this.attachEventListeners();
+        this.createSearchInput();
+        this.setupMobileMenu();
+        this.setupDragAndDrop();
         this.loadFiles();
 
         // Auto-refresh every 5 seconds
         setInterval(() => {
             this.loadFiles(true);
         }, 5000);
+    },
+
+    /**
+     * Setup mobile hamburger menu
+     */
+    setupMobileMenu() {
+        const hamburgerBtn = document.getElementById('hamburgerBtn');
+        const sidebar = document.getElementById('sidebar');
+        const overlay = document.getElementById('sidebarOverlay');
+
+        if (!hamburgerBtn || !sidebar || !overlay) return;
+
+        hamburgerBtn.onclick = () => {
+            sidebar.classList.toggle('open');
+            overlay.classList.toggle('hidden');
+        };
+
+        overlay.onclick = () => {
+            sidebar.classList.remove('open');
+            overlay.classList.add('hidden');
+        };
+    },
+
+    /**
+     * Setup drag and drop upload
+     */
+    setupDragAndDrop() {
+        const container = document.getElementById('fileListContainer');
+        const dropZone = document.getElementById('dropZone');
+
+        if (!container || !dropZone) return;
+
+        let dragCounter = 0;
+
+        container.addEventListener('dragenter', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dragCounter++;
+            dropZone.classList.remove('hidden');
+        });
+
+        container.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dragCounter--;
+            if (dragCounter === 0) {
+                dropZone.classList.add('hidden');
+            }
+        });
+
+        container.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+        });
+
+        container.addEventListener('drop', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dragCounter = 0;
+            dropZone.classList.add('hidden');
+
+            const files = Array.from(e.dataTransfer.files);
+            if (files.length > 0) {
+                UploadManager.startUpload(files);
+            }
+        });
+    },
+
+    /**
+     * Create and attach search input to the header
+     */
+    createSearchInput() {
+        const mainHeader = document.querySelector('.main-header');
+        if (!mainHeader) return;
+
+        // Create search container
+        const searchContainer = document.createElement('div');
+        searchContainer.className = 'search-container';
+        searchContainer.innerHTML = `
+            <div class="search-input-wrapper">
+                <i class="fas fa-search search-icon"></i>
+                <input type="text" id="searchInput" class="search-input" placeholder="Search files and folders..." aria-label="Search files and folders" />
+                <button id="clearSearchBtn" class="clear-search-btn hidden" aria-label="Clear search">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+        `;
+
+        // Insert after the path display or at the end
+        const pathDisplay = mainHeader.querySelector('#pathDisplay');
+        if (pathDisplay && pathDisplay.parentElement) {
+            pathDisplay.parentElement.insertAdjacentElement('afterend', searchContainer);
+        } else {
+            mainHeader.appendChild(searchContainer);
+        }
+
+        // Attach search input event with debouncing
+        const searchInput = document.getElementById('searchInput');
+        const clearBtn = document.getElementById('clearSearchBtn');
+        let debounceTimer;
+
+        searchInput.addEventListener('input', (e) => {
+            const query = e.target.value;
+
+            // Show/hide clear button
+            if (query) {
+                clearBtn.classList.remove('hidden');
+            } else {
+                clearBtn.classList.add('hidden');
+            }
+
+            // Debounce the search
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => {
+                AppState.setSearchQuery(query);
+                this.render();
+            }, 300);
+        });
+
+        // Clear search button
+        clearBtn.addEventListener('click', () => {
+            searchInput.value = '';
+            clearBtn.classList.add('hidden');
+            AppState.setSearchQuery('');
+            this.render();
+        });
+
+        // Allow Escape key to clear search
+        searchInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                searchInput.value = '';
+                clearBtn.classList.add('hidden');
+                AppState.setSearchQuery('');
+                this.render();
+                searchInput.blur();
+            }
+        });
     },
 
     /**
@@ -34,6 +236,12 @@ const FileManager = {
 
         // Selection
         document.getElementById('selectAllCheckbox').onclick = () => this.toggleSelectAll();
+        document.getElementById('selectAllCheckbox').onkeydown = (e) => {
+            if (e.key === ' ' || e.key === 'Enter') {
+                e.preventDefault();
+                this.toggleSelectAll();
+            }
+        };
         document.getElementById('bulkDownloadBtn').onclick = () => this.bulkDownload();
         document.getElementById('bulkMoveBtn').onclick = () => this.bulkMove();
         document.getElementById('bulkDeleteBtn').onclick = () => this.bulkDelete();
@@ -67,6 +275,11 @@ const FileManager = {
      */
     async loadFiles(silent = false) {
         try {
+            // Show skeleton loading state for non-silent loads
+            if (!silent) {
+                this.showSkeletonLoading();
+            }
+
             const data = await API.sync();
             if (data) {
                 AppState.setFiles(data.files, data.folders);
@@ -75,9 +288,45 @@ const FileManager = {
         } catch (error) {
             if (!silent) {
                 UI.showNotification('Failed to load files', 'error');
+                // Clear skeleton on error
+                this.render();
             }
             console.error('Load files error:', error);
         }
+    },
+
+    /**
+     * Show skeleton loading state
+     */
+    showSkeletonLoading() {
+        const tbody = document.getElementById('fileListBody');
+        const skeletonRows = [];
+
+        // Generate 5 skeleton rows
+        for (let i = 0; i < 5; i++) {
+            skeletonRows.push(`
+                <tr class="file-row skeleton-row">
+                    <td class="col-checkbox">
+                        <div class="skeleton skeleton-checkbox"></div>
+                    </td>
+                    <td class="col-name">
+                        <div class="skeleton skeleton-icon"></div>
+                        <div class="skeleton skeleton-text" style="width: ${60 + Math.random() * 30}%"></div>
+                    </td>
+                    <td class="col-date">
+                        <div class="skeleton skeleton-text" style="width: 80%"></div>
+                    </td>
+                    <td class="col-size">
+                        <div class="skeleton skeleton-text" style="width: 60%"></div>
+                    </td>
+                    <td class="col-actions">
+                        <div class="skeleton skeleton-actions"></div>
+                    </td>
+                </tr>
+            `);
+        }
+
+        tbody.innerHTML = skeletonRows.join('');
     },
 
     /**
@@ -304,6 +553,21 @@ const FileManager = {
     },
 
     /**
+     * Handle checkbox keyboard events for accessibility
+     */
+    handleCheckboxKeydown(e, id, isFolder) {
+        if (e.key === ' ' || e.key === 'Enter') {
+            e.preventDefault();
+            if (isFolder) {
+                AppState.toggleFolderSelection(id);
+            } else {
+                AppState.toggleFileSelection(id);
+            }
+            this.render();
+        }
+    },
+
+    /**
      * Render file list
      */
     render() {
@@ -312,6 +576,12 @@ const FileManager = {
         this.renderSelectionBar();
         this.renderFileList();
         this.updateSelectAllCheckbox();
+
+        // Pre-fetch files for instant viewing
+        if (typeof FileViewer !== 'undefined' && FileViewer.prefetchCurrentDirectory) {
+            // Delay slightly to not block rendering
+            setTimeout(() => FileViewer.prefetchCurrentDirectory(), 100);
+        }
     },
 
     /**
@@ -350,11 +620,14 @@ const FileManager = {
      */
     updateSelectAllCheckbox() {
         const checkbox = document.getElementById('selectAllCheckbox');
-        if (AppState.isAllSelected()) {
+        const isChecked = AppState.isAllSelected();
+        if (isChecked) {
             checkbox.classList.add('checked');
         } else {
             checkbox.classList.remove('checked');
         }
+        // Update accessibility attributes
+        checkbox.setAttribute('aria-checked', isChecked.toString());
     },
 
     /**
@@ -387,11 +660,15 @@ const FileManager = {
 
         // Show empty state if no items
         if (folders.length === 0 && files.length === 0) {
+            const searchQuery = AppState.ui.searchQuery;
+            const emptyMessage = searchQuery
+                ? `No results found for "${searchQuery}"`
+                : 'This folder is empty';
             tbody.innerHTML = `
                 <tr>
                     <td colspan="5" class="empty-state">
-                        <i class="fas fa-folder-open"></i>
-                        <p>This folder is empty</p>
+                        <i class="fas ${searchQuery ? 'fa-search' : 'fa-folder-open'}"></i>
+                        <p>${emptyMessage}</p>
                     </td>
                 </tr>
             `;
@@ -407,7 +684,11 @@ const FileManager = {
 
         tr.innerHTML = `
             <td class="col-checkbox">
-                <div class="checkbox-container ${isSelected ? 'checked' : ''}">
+                <div class="checkbox-container ${isSelected ? 'checked' : ''}"
+                     role="checkbox"
+                     aria-checked="${isSelected}"
+                     aria-label="Select folder ${folderName}"
+                     tabindex="0">
                     <div class="checkmark"></div>
                 </div>
             </td>
@@ -419,15 +700,22 @@ const FileManager = {
             <td class="col-date">--</td>
             <td class="col-size">Folder</td>
             <td class="col-actions">
-                <button class="action-btn delete-btn" title="Delete">
+                <button class="action-btn delete-btn" title="Delete" aria-label="Delete folder ${folderName}">
                     <i class="fas fa-trash"></i>
                 </button>
             </td>
         `;
 
+        const checkboxContainer = tr.querySelector('.checkbox-container');
+
         // Checkbox click
-        tr.querySelector('.checkbox-container').onclick = (e) => {
+        checkboxContainer.onclick = (e) => {
             this.toggleSelection(fullPath, true, e);
+        };
+
+        // Checkbox keyboard handler
+        checkboxContainer.onkeydown = (e) => {
+            this.handleCheckboxKeydown(e, fullPath, true);
         };
 
         // Row click - navigate
@@ -457,14 +745,21 @@ const FileManager = {
         const isPending = file.status === 'PENDING';
         const isDedup = file.isReference;
 
+        // Get file icon based on extension
+        const fileIcon = this.getFileIcon(file.name);
+
         tr.innerHTML = `
             <td class="col-checkbox">
-                <div class="checkbox-container ${isSelected ? 'checked' : ''}">
+                <div class="checkbox-container ${isSelected ? 'checked' : ''}"
+                     role="checkbox"
+                     aria-checked="${isSelected}"
+                     aria-label="Select file ${file.name}"
+                     tabindex="0">
                     <div class="checkmark"></div>
                 </div>
             </td>
             <td class="col-name">
-                <i class="fas fa-file-alt text-blue-500"></i>
+                <i class="fas ${fileIcon.icon} ${fileIcon.color}"></i>
                 <span class="item-name">${file.name}</span>
                 ${isPending ? '<span class="badge badge-pending">UPLOAD...</span>' : ''}
                 ${isDedup ? '<span class="badge badge-dedup">DEDUP</span>' : ''}
@@ -473,22 +768,29 @@ const FileManager = {
             <td class="col-size">${UI.formatBytes(file.size)}</td>
             <td class="col-actions">
                 ${!isPending ? `
-                    <button class="action-btn download-btn" title="Download">
+                    <button class="action-btn download-btn" title="Download" aria-label="Download file ${file.name}">
                         <i class="fas fa-download"></i>
                     </button>
-                    <button class="action-btn preview-btn" title="Preview">
+                    <button class="action-btn preview-btn" title="Preview" aria-label="Preview file ${file.name}">
                         <i class="fas fa-eye"></i>
                     </button>
                 ` : ''}
-                <button class="action-btn delete-btn" title="Delete">
+                <button class="action-btn delete-btn" title="Delete" aria-label="Delete file ${file.name}">
                     <i class="fas fa-trash"></i>
                 </button>
             </td>
         `;
 
+        const checkboxContainer = tr.querySelector('.checkbox-container');
+
         // Checkbox click
-        tr.querySelector('.checkbox-container').onclick = (e) => {
+        checkboxContainer.onclick = (e) => {
             this.toggleSelection(file.id, false, e);
+        };
+
+        // Checkbox keyboard handler
+        checkboxContainer.onkeydown = (e) => {
+            this.handleCheckboxKeydown(e, file.id, false);
         };
 
         // Download button

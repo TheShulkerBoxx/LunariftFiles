@@ -7,6 +7,7 @@ const UploadManager = {
     MAX_PARALLEL_UPLOADS: 3,
     MAX_RETRIES: 3,
     RETRY_DELAY_BASE: 1000,
+    LARGE_FILE_THRESHOLD: 25 * 1024 * 1024, // 25MB
 
     /**
      * Initialize upload manager
@@ -68,10 +69,31 @@ const UploadManager = {
     },
 
     /**
+     * Check for large files and show warning if needed
+     */
+    checkLargeFiles(files) {
+        const largeFiles = files.filter(file => file.size > this.LARGE_FILE_THRESHOLD);
+
+        if (largeFiles.length > 0) {
+            const largestFile = largeFiles.reduce((a, b) => a.size > b.size ? a : b);
+            const sizeFormatted = UI.formatBytes(largestFile.size);
+
+            if (largeFiles.length === 1) {
+                UI.showNotification(`Large file detected (${sizeFormatted}). Upload may take a while.`, 'info');
+            } else {
+                UI.showNotification(`${largeFiles.length} large files detected. Upload may take a while.`, 'info');
+            }
+        }
+    },
+
+    /**
      * Start upload process
      */
     async startUpload(files) {
         if (files.length === 0) return;
+
+        // Check for large files and show warning
+        this.checkLargeFiles(files);
 
         // Reset upload state
         AppState.uploads.active.clear();

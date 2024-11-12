@@ -373,4 +373,78 @@ html, body {
     .sidebar.open {
         transform: translateX(0);
     }
+
+    .hamburger-btn {
+        display: flex;
+    }
+}
+
+/* Mobile Hamburger Button */
+.hamburger-btn {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--color-border);
+    border-radius: var(--border-radius-md);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    margin-right: var(--spacing-sm);
+}
+
+.hamburger-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--color-text-primary);
+}
+
+/* Sidebar Overlay */
+.sidebar-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(4px);
+    z-index: 40;
+}
+
+/* Drop Zone */
+.drop-zone {
+    position: absolute;
+    inset: 0;
+    background: rgba(59, 130, 246, 0.1);
+    border: 2px dashed var(--color-blue);
+    border-radius: var(--border-radius-lg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 20;
+    pointer-events: none;
+}
+
+.drop-zone-content {
+    text-align: center;
+    color: var(--color-blue);
+}
+
+.drop-zone-content i {
+    font-size: 3rem;
+    margin-bottom: var(--spacing-md);
+    animation: bounce 1s ease infinite;
+}
+
+.drop-zone-content p {
+    font-size: 1.125rem;
+    font-weight: 600;
+}
+
+@keyframes bounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-10px); }
+}
+
+/* Make file list container relative for drop zone positioning */
+.file-list-container {
+    position: relative;
 }

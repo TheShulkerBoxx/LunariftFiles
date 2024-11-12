@@ -8,12 +8,42 @@ const config = require('../../config/config');
 const logger = require('../logger');
 
 /**
+ * Default timeout for Discord API operations (30 seconds)
+ */
+const DISCORD_API_TIMEOUT = 30000;
+
+/**
  * Sleep for specified milliseconds
  * @param {number} ms - Milliseconds to sleep
  * @returns {Promise<void>}
  */
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Wrap a promise with a timeout
+ * @param {Promise} promise - The promise to wrap
+ * @param {number} timeoutMs - Timeout in milliseconds
+ * @param {string} operationName - Name of the operation for error message
+ * @returns {Promise} The wrapped promise that rejects on timeout
+ */
+function withTimeout(promise, timeoutMs, operationName = 'Operation') {
+    return new Promise((resolve, reject) => {
+        const timeoutId = setTimeout(() => {
+            reject(new Error(`${operationName} timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+
+        promise
+            .then(result => {
+                clearTimeout(timeoutId);
+                resolve(result);
+            })
+            .catch(error => {
+                clearTimeout(timeoutId);
+                reject(error);
+            });
+    });
 }
 
 /**
@@ -30,14 +60,21 @@ async function uploadChunkWithRetry(channel, buffer, fileId, chunkIndex, totalPa
 
     for (let attempt = 1; attempt <= config.upload.maxRetries; attempt++) {
         try {
-            const attachment = new AttachmentBuilder(buffer, { 
-                name: `part_${chunkIndex}.bin` 
+            const attachment = new AttachmentBuilder(buffer, {
+                name: `part_${chunkIndex}.bin`
             });
 
-            const msg = await channel.send({
+            const sendPromise = channel.send({
                 content: `DATA | ${fileId} | Chunk ${chunkIndex}/${totalParts}`,
                 files: [attachment]
             });
+
+            // Apply 30-second timeout to the Discord message send operation
+            const msg = await withTimeout(
+                sendPromise,
+                DISCORD_API_TIMEOUT,
+                `Discord message send (chunk ${chunkIndex}/${totalParts})`
+            );
 
             return msg.id;
         } catch (error) {
@@ -119,5 +156,7 @@ async function uploadFileToDiscord(channelId, fileBuffer, fileId, fileName) {
 module.exports = {
     uploadChunkWithRetry,
     uploadFileToDiscord,
-    sleep
+    withTimeout,
+    sleep,
+    DISCORD_API_TIMEOUT
 };

@@ -7,7 +7,7 @@ const busboy = require('busboy');
 const authMiddleware = require('../middleware/authMiddleware');
 const { processFileUpload, processBatchUpload } = require('../services/files/uploadService');
 const { downloadFile, streamDownloadFile, getContentType } = require('../services/files/downloadService');
-const { createFolder, deleteItem, nukeAllFiles, getFileList } = require('../services/files/fileService');
+const { createFolder, deleteItem, nukeAllFiles, getFileList, moveItem } = require('../services/files/fileService');
 const { saveUserEnv } = require('../services/discord/channels');
 const config = require('../config/config');
 const logger = require('../services/logger');
@@ -20,9 +20,18 @@ router.use(authMiddleware);
 /**
  * GET /api/sync
  * Get all files and folders for authenticated user
+ * Supports optional pagination with query params: page, limit
+ * Without pagination params, returns all files (backward compatibility)
  */
 router.get('/sync', (req, res) => {
-    const fileList = getFileList(req.userEnv);
+    const { page, limit } = req.query;
+
+    // Pass pagination options if provided
+    const options = {};
+    if (page) options.page = page;
+    if (limit) options.limit = limit;
+
+    const fileList = getFileList(req.userEnv, options);
     res.json(fileList);
 });
 
@@ -308,6 +317,26 @@ router.post('/nuke', async (req, res) => {
     } catch (error) {
         logger.error('Nuke failed:', error);
         res.status(500).json({ error: 'Failed to nuke files' });
+    }
+});
+
+/**
+ * POST /api/move
+ * Move a file or folder to a new path
+ */
+router.post('/move', async (req, res) => {
+    try {
+        const { id, isFolder, newPath } = req.body;
+
+        if (!id || newPath === undefined) {
+            return res.status(400).json({ error: 'Missing required fields: id and newPath' });
+        }
+
+        await moveItem(req.username, req.userEnv, id, isFolder, newPath);
+        res.json({ success: true });
+    } catch (error) {
+        logger.error('Move item failed:', error);
+        res.status(500).json({ error: 'Failed to move item: ' + error.message });
     }
 });
 

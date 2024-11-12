@@ -267,11 +267,17 @@ const Auth = {
                     <input type="file" id="folderInput" webkitdirectory directory class="hidden">
                 </div>
 
+                <!-- Mobile Sidebar Overlay -->
+                <div id="sidebarOverlay" class="sidebar-overlay hidden"></div>
+
                 <!-- Main Content -->
                 <div id="mainView" class="main-view">
                     <!-- Header -->
                     <header class="main-header">
                         <div class="main-header-left">
+                            <button id="hamburgerBtn" class="hamburger-btn">
+                                <i class="fas fa-bars"></i>
+                            </button>
                             <button id="backBtn" class="back-btn">
                                 <i class="fas fa-chevron-left"></i>
                             </button>
@@ -298,11 +304,19 @@ const Auth = {
 
                     <!-- File List -->
                     <div id="fileListContainer" class="file-list-container">
+                        <!-- Drop Zone Overlay -->
+                        <div id="dropZone" class="drop-zone hidden">
+                            <div class="drop-zone-content">
+                                <i class="fas fa-cloud-upload-alt"></i>
+                                <p>Drop files here to upload</p>
+                            </div>
+                        </div>
+
                         <table class="file-table">
                             <thead>
                                 <tr>
                                     <th class="col-checkbox">
-                                        <div class="checkbox-container" id="selectAllCheckbox">
+                                        <div class="checkbox-container" id="selectAllCheckbox" role="checkbox" aria-checked="false" aria-label="Select all items" tabindex="0">
                                             <div class="checkmark"></div>
                                         </div>
                                     </th>

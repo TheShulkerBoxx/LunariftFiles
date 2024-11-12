@@ -39,7 +39,8 @@ const AppState = {
     ui: {
         isAuthenticated: false,
         isLoading: false,
-        sidebarVisible: true
+        sidebarVisible: true,
+        searchQuery: ''
     },
 
     /**
@@ -58,7 +59,7 @@ const AppState = {
         this.user.username = username;
         this.user.token = token;
         this.ui.isAuthenticated = true;
-        
+
         localStorage.setItem('username', username);
         localStorage.setItem('token', token);
     },
@@ -70,7 +71,7 @@ const AppState = {
         this.user.username = '';
         this.user.token = '';
         this.ui.isAuthenticated = false;
-        
+
         localStorage.removeItem('username');
         localStorage.removeItem('token');
     },
@@ -81,6 +82,14 @@ const AppState = {
     setFiles(files, folders) {
         this.files = files || [];
         this.folders = folders || [];
+    },
+
+    /**
+     * Set search query for filtering files and folders
+     * @param {string} query - The search query
+     */
+    setSearchQuery(query) {
+        this.ui.searchQuery = query.trim();
     },
 
     /**
@@ -126,7 +135,7 @@ const AppState = {
     isAllSelected() {
         const currentFiles = this.files.filter(f => f.path === this.currentPath);
         const currentFolders = this.getFolders();
-        
+
         return currentFiles.every(f => this.selection.files.has(f.id)) &&
                currentFolders.every(folder => {
                    const fullPath = this.currentPath + folder + '/';
@@ -140,7 +149,7 @@ const AppState = {
     selectAll() {
         const currentFiles = this.files.filter(f => f.path === this.currentPath);
         const currentFolders = this.getFolders();
-        
+
         currentFiles.forEach(f => this.selection.files.add(f.id));
         currentFolders.forEach(folder => {
             const fullPath = this.currentPath + folder + '/';
@@ -154,7 +163,7 @@ const AppState = {
     deselectAll() {
         const currentFiles = this.files.filter(f => f.path === this.currentPath);
         const currentFolders = this.getFolders();
-        
+
         currentFiles.forEach(f => this.selection.files.delete(f.id));
         currentFolders.forEach(folder => {
             const fullPath = this.currentPath + folder + '/';
@@ -163,7 +172,7 @@ const AppState = {
     },
 
     /**
-     * Get unique folders in current path
+     * Get unique folders in current path (filtered by search query)
      */
     getFolders() {
         const folderSet = new Set();
@@ -186,7 +195,15 @@ const AppState = {
                 if (firstFolder) folderSet.add(firstFolder);
             });
 
-        return Array.from(folderSet);
+        let folders = Array.from(folderSet);
+
+        // Apply search filter if query exists
+        if (this.ui.searchQuery) {
+            const query = this.ui.searchQuery.toLowerCase();
+            folders = folders.filter(folder => folder.toLowerCase().includes(query));
+        }
+
+        return folders;
     },
 
     /**
@@ -195,6 +212,8 @@ const AppState = {
     navigateTo(path) {
         this.currentPath = path;
         this.clearSelection();
+        // Clear search when navigating
+        this.ui.searchQuery = '';
     },
 
     /**
@@ -205,6 +224,8 @@ const AppState = {
         parts.pop();
         this.currentPath = '/' + parts.join('/') + (parts.length > 0 ? '/' : '');
         this.clearSelection();
+        // Clear search when navigating
+        this.ui.searchQuery = '';
     },
 
     /**
@@ -220,15 +241,29 @@ const AppState = {
     },
 
     /**
-     * Get sorted files for current path
+     * Get sorted files for current path (filtered by search query)
      */
     getSortedFiles() {
-        const currentFiles = this.files.filter(f => f.path === this.currentPath);
+        let currentFiles = this.files.filter(f => f.path === this.currentPath);
+
+        // Apply search filter if query exists
+        if (this.ui.searchQuery) {
+            const query = this.ui.searchQuery.toLowerCase();
+            currentFiles = currentFiles.filter(f => f.name.toLowerCase().includes(query));
+        }
+
         return currentFiles.sort((a, b) => {
             const aVal = a[this.sort.column];
             const bVal = b[this.sort.column];
             return (aVal > bVal ? 1 : -1) * this.sort.order;
         });
+    },
+
+    /**
+     * Get all files in current path (unsorted)
+     */
+    getCurrentFiles() {
+        return this.files.filter(f => f.path === this.currentPath);
     }
 };
 
