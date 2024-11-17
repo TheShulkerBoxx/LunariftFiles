@@ -90,8 +90,20 @@ async function createFolder(username, userEnv, folderPath) {
  */
 async function deleteItem(username, userEnv, id, isFolder) {
     if (isFolder) {
-        userEnv.state.folders = userEnv.state.folders.filter(f => f !== id);
-        logger.info(`Deleted folder: ${id} for user ${username}`);
+        const folderPath = id;
+
+        // Delete the folder itself
+        userEnv.state.folders = userEnv.state.folders.filter(f => f !== folderPath);
+
+        // Delete all subfolders that start with this folder path
+        userEnv.state.folders = userEnv.state.folders.filter(f => !f.startsWith(folderPath));
+
+        // Delete all files inside this folder (and subfolders)
+        const filesToDelete = userEnv.state.files.filter(f => f.path.startsWith(folderPath));
+        const fileCount = filesToDelete.length;
+        userEnv.state.files = userEnv.state.files.filter(f => !f.path.startsWith(folderPath));
+
+        logger.info(`Deleted folder: ${folderPath} (including ${fileCount} files) for user ${username}`);
     } else {
         // Find the file to be deleted
         const fileToDelete = userEnv.state.files.find(f => f.id === id);
