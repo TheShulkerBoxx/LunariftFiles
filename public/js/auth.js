@@ -347,6 +347,7 @@ const Auth = {
         // Initialize file manager
         FileManager.init();
         UploadManager.init();
+        FileViewer.init();
     },
 
     /**
