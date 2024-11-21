@@ -8,6 +8,7 @@ const UploadManager = {
     MAX_RETRIES: 3,
     RETRY_DELAY_BASE: 1000,
     LARGE_FILE_THRESHOLD: 25 * 1024 * 1024, // 25MB
+    failedUploads: new Map(), // Store failed upload items for retry
 
     /**
      * Initialize upload manager
@@ -269,6 +270,8 @@ const UploadManager = {
             // Failed after retries
             upload.status = 'failed';
             upload.progress = 0;
+            // Store the failed upload item for potential manual retry
+            this.failedUploads.set(item.id, item);
             this.updateUI();
             throw error;
         }
@@ -280,6 +283,49 @@ const UploadManager = {
     cancelUpload() {
         AppState.uploads.cancelled = true;
         UI.showNotification('Cancelling uploads...', 'info');
+    },
+
+    /**
+     * Retry a failed upload
+     */
+    async retryUpload(uploadId) {
+        const item = this.failedUploads.get(uploadId);
+        if (!item) {
+            UI.showNotification('Upload item not found for retry', 'error');
+            return;
+        }
+
+        // Remove from failed uploads
+        this.failedUploads.delete(uploadId);
+
+        // Reset upload state for this item
+        const upload = AppState.uploads.active.get(uploadId);
+        if (upload) {
+            upload.status = 'pending';
+            upload.progress = 0;
+            this.updateUI();
+        }
+
+        // Reset cancelled flag if it was set
+        AppState.uploads.cancelled = false;
+
+        // Show cancel button again
+        document.getElementById('cancelUploadBtn').style.display = 'block';
+
+        try {
+            await this.uploadFileWithRetry(item);
+            UI.showNotification(`Successfully uploaded ${item.file.name}`, 'success');
+
+            // Reload files
+            setTimeout(() => {
+                FileManager.loadFiles();
+            }, 500);
+        } catch (error) {
+            UI.showNotification(`Failed to upload ${item.file.name}`, 'error');
+        }
+
+        // Hide cancel button after retry completes
+        document.getElementById('cancelUploadBtn').style.display = 'none';
     },
 
     /**
@@ -334,6 +380,7 @@ const UploadManager = {
 
         list.innerHTML = uploads.map(upload => {
             let statusIcon, statusClass, progressClass;
+            let retryButton = '';
 
             switch (upload.status) {
                 case 'pending':
@@ -360,6 +407,7 @@ const UploadManager = {
                     statusIcon = '<i class="fas fa-times"></i>';
                     statusClass = 'failed';
                     progressClass = 'failed';
+                    retryButton = `<button class="upload-retry-btn" onclick="UploadManager.retryUpload('${upload.id}')" title="Retry upload"><i class="fas fa-redo"></i></button>`;
                     break;
                 case 'retrying':
                     statusIcon = '<i class="fas fa-redo"></i>';
@@ -383,6 +431,7 @@ const UploadManager = {
                         <span class="status-icon ${statusClass}">${statusIcon}</span>
                         <span class="upload-item-name" title="${upload.path}${upload.name}">${upload.name}</span>
                         <span class="upload-item-size">${UI.formatBytes(upload.size)}</span>
+                        ${retryButton}
                     </div>
                     <div class="upload-progress-bar">
                         <div class="upload-progress-fill ${progressClass}" style="width: ${upload.progress}%"></div>

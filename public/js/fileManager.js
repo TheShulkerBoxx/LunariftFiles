@@ -420,6 +420,9 @@ const FileManager = {
             return;
         }
 
+        // Clear any previous download tracking
+        API.clearDownloadTracking();
+
         UI.showNotification(`Downloading ${fileIds.length} file(s)...`, 'info');
 
         for (const fileId of fileIds) {
@@ -435,6 +438,8 @@ const FileManager = {
             }
         }
 
+        // Clear tracking after bulk download
+        API.clearDownloadTracking();
         UI.showNotification('Downloads complete', 'success');
     },
 

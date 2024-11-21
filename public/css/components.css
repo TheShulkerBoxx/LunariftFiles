@@ -393,17 +393,19 @@
     overflow: hidden;
     display: flex;
     flex-direction: column;
-    max-height: 400px;
+    max-height: 450px;
+    min-height: 200px;
     margin-bottom: var(--spacing-lg);
 }
 
 .upload-panel-header {
     background: linear-gradient(135deg, var(--color-blue-dark) 0%, var(--color-blue) 100%);
-    padding: var(--spacing-sm) var(--spacing-md);
+    padding: var(--spacing-md) var(--spacing-lg);
     display: flex;
     justify-content: space-between;
     align-items: center;
     flex-shrink: 0;
+    gap: var(--spacing-md);
 }
 
 .upload-panel-title {
@@ -411,30 +413,32 @@
     align-items: center;
     gap: var(--spacing-sm);
     font-weight: 700;
-    font-size: 0.875rem;
+    font-size: 0.9rem;
     color: white;
 }
 
 .upload-cancel-btn {
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.15);
     border: none;
-    color: rgba(255, 255, 255, 0.7);
-    padding: var(--spacing-xs) var(--spacing-sm);
+    color: rgba(255, 255, 255, 0.85);
+    padding: var(--spacing-sm) var(--spacing-md);
     border-radius: var(--border-radius-sm);
     font-size: 0.75rem;
+    font-weight: 500;
     cursor: pointer;
     transition: all var(--transition-fast);
 }
 
 .upload-cancel-btn:hover {
-    background: rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.25);
     color: white;
 }
 
 .overall-progress-bar {
     height: 6px;
     background: rgba(255, 255, 255, 0.1);
-    margin: 0 var(--spacing-md);
+    margin: var(--spacing-md) var(--spacing-lg) 0 var(--spacing-lg);
+    border-radius: 3px;
     overflow: hidden;
 }
 
@@ -449,15 +453,15 @@
 .upload-list {
     flex: 1;
     overflow-y: auto;
-    padding: var(--spacing-sm);
-    min-height: 0;
+    padding: var(--spacing-md) var(--spacing-lg);
+    min-height: 80px;
 }
 
 .upload-item {
     background: rgba(30, 41, 59, 0.8);
     border-radius: var(--border-radius-md);
-    padding: var(--spacing-sm) var(--spacing-md);
-    margin-bottom: var(--spacing-xs);
+    padding: var(--spacing-md);
+    margin-bottom: var(--spacing-sm);
 }
 
 .upload-item:last-child {
@@ -468,7 +472,7 @@
     display: flex;
     align-items: center;
     gap: var(--spacing-sm);
-    margin-bottom: var(--spacing-xs);
+    margin-bottom: var(--spacing-sm);
 }
 
 .upload-item-name {
@@ -529,11 +533,44 @@
     animation: pulse 1s ease-in-out infinite;
 }
 
+/* Upload Retry Button */
+.upload-retry-btn {
+    background: rgba(59, 130, 246, 0.2);
+    border: none;
+    color: var(--color-blue);
+    width: 22px;
+    height: 22px;
+    border-radius: 4px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.625rem;
+    transition: all var(--transition-fast);
+    flex-shrink: 0;
+    margin-left: var(--spacing-xs);
+}
+
+.upload-retry-btn:hover {
+    background: rgba(59, 130, 246, 0.4);
+    color: white;
+}
+
+.upload-retry-btn:focus {
+    outline: 2px solid var(--color-blue);
+    outline-offset: 1px;
+}
+
+.upload-retry-btn:active {
+    transform: scale(0.95);
+}
+
 .upload-stats {
     background: rgba(30, 41, 59, 0.6);
-    padding: var(--spacing-sm) var(--spacing-md);
+    padding: var(--spacing-md) var(--spacing-lg);
+    margin-top: var(--spacing-sm);
     border-top: 1px solid var(--color-border-light);
-    font-size: 0.625rem;
+    font-size: 0.75rem;
     color: var(--color-text-muted);
     flex-shrink: 0;
 }
@@ -595,6 +632,53 @@
     font-weight: 600;
     cursor: pointer;
     transition: all var(--transition-fast);
+}
+
+/* Modal Confirm/Cancel Buttons - High Contrast */
+.modal-content .confirm-btn,
+.modal-content .ok-btn {
+    background: var(--color-red) !important;
+    color: #ffffff !important;
+    border: 1px solid var(--color-red-dark) !important;
+    text-shadow: 0 1px 1px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 2px 4px rgba(239, 68, 68, 0.3);
+}
+
+.modal-content .confirm-btn:hover,
+.modal-content .ok-btn:hover {
+    background: var(--color-red-dark) !important;
+    border-color: #b91c1c !important;
+    box-shadow: 0 4px 8px rgba(239, 68, 68, 0.4);
+    transform: translateY(-1px);
+}
+
+.modal-content .confirm-btn:active,
+.modal-content .ok-btn:active {
+    transform: translateY(0);
+    box-shadow: 0 1px 2px rgba(239, 68, 68, 0.3);
+}
+
+.modal-content .cancel-btn {
+    background: var(--color-bg-tertiary) !important;
+    color: var(--color-text-primary) !important;
+    border: 1px solid var(--color-border-light) !important;
+}
+
+.modal-content .cancel-btn:hover {
+    background: rgba(255, 255, 255, 0.15) !important;
+    border-color: var(--color-text-dim) !important;
+}
+
+/* Focus states for accessibility */
+.modal-content .confirm-btn:focus-visible,
+.modal-content .ok-btn:focus-visible {
+    outline: 2px solid var(--color-red);
+    outline-offset: 2px;
+}
+
+.modal-content .cancel-btn:focus-visible {
+    outline: 2px solid var(--color-text-secondary);
+    outline-offset: 2px;
 }
 
 /* Notification */
@@ -997,7 +1081,7 @@
     box-shadow: 0 25px 80px -12px rgba(0, 0, 0, 0.6);
     overflow: hidden;
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: center;
     padding: 30px;
 }
@@ -1008,25 +1092,26 @@
     max-width: 816px; /* A4 width at 96dpi */
     height: 100%;
     overflow: auto;
-    padding: 60px 72px;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
     border-radius: 2px;
 }
 
-/* DOCX specific styling - ensure readable text */
-.viewer-docx,
-.viewer-docx * {
-    color: #000 !important;
-    background-color: transparent !important;
-}
-
-.viewer-docx {
+/* docx-preview library wrapper styling */
+.viewer-docx .docx-wrapper {
     background: white !important;
+    padding: 60px 72px;
+    min-height: 100%;
 }
 
+/* Ensure document content is readable - apply only to text elements */
+.viewer-docx .docx-wrapper section.docx {
+    background: white;
+}
+
+/* Let the library handle fonts - only set fallback colors without !important */
 .viewer-docx p,
 .viewer-docx span,
-.viewer-docx div,
+.viewer-docx div:not(.docx-wrapper),
 .viewer-docx h1,
 .viewer-docx h2,
 .viewer-docx h3,
@@ -1036,16 +1121,25 @@
 .viewer-docx li,
 .viewer-docx td,
 .viewer-docx th {
-    color: #1a1a1a !important;
+    color: #1a1a1a;
 }
 
+/* Preserve images - don't override their styles */
+.viewer-docx img {
+    max-width: 100%;
+    height: auto;
+    display: inline-block;
+}
+
+/* Table styling */
 .viewer-docx table {
     border-collapse: collapse;
+    max-width: 100%;
 }
 
 .viewer-docx td,
 .viewer-docx th {
-    border: 1px solid #d1d5db !important;
+    border: 1px solid #d1d5db;
     padding: 8px 12px;
 }
 
@@ -1204,7 +1298,7 @@
         padding: 16px;
     }
 
-    .viewer-docx {
+    .viewer-docx .docx-wrapper {
         padding: 30px 24px;
     }
 

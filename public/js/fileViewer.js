@@ -601,15 +601,22 @@ const FileViewer = {
             `;
 
             const container = document.getElementById('docx-render');
+
+            // Configure docx-preview options for best rendering
             await docx.renderAsync(blob, container, null, {
                 className: 'docx-content',
-                inWrapper: false,
-                ignoreWidth: false,
-                ignoreHeight: false,
+                inWrapper: true,           // Use wrapper for proper page structure
+                ignoreWidth: false,        // Respect document width
+                ignoreHeight: true,        // Allow content to flow naturally
+                ignoreFonts: false,        // Render document fonts
+                breakPages: false,         // Don't break into separate pages (continuous scroll)
                 renderHeaders: true,
                 renderFooters: true,
                 renderFootnotes: true,
-                renderEndnotes: true
+                renderEndnotes: true,
+                useBase64URL: true,         // Use base64 for embedded images
+                renderChanges: false,       // Don't show tracked changes
+                experimental: true          // Enable experimental features for better rendering
             });
 
         } catch (error) {

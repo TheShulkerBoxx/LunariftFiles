@@ -6,6 +6,9 @@
 const API = {
     baseURL: '',
 
+    // Track downloaded filenames in current session for deduplication
+    downloadedFilenames: new Map(),
+
     /**
      * Make an API request with automatic token injection
      */
@@ -187,6 +190,35 @@ const API = {
     },
 
     /**
+     * Get unique filename for download (handles duplicates with (1), (2), etc.)
+     */
+    getUniqueFilename(fileName) {
+        const count = this.downloadedFilenames.get(fileName) || 0;
+        this.downloadedFilenames.set(fileName, count + 1);
+
+        if (count === 0) {
+            return fileName;
+        }
+
+        // Split filename into name and extension
+        const lastDot = fileName.lastIndexOf('.');
+        if (lastDot === -1) {
+            return `${fileName} (${count})`;
+        }
+
+        const name = fileName.substring(0, lastDot);
+        const ext = fileName.substring(lastDot);
+        return `${name} (${count})${ext}`;
+    },
+
+    /**
+     * Clear download filename tracking (call after bulk download completes)
+     */
+    clearDownloadTracking() {
+        this.downloadedFilenames.clear();
+    },
+
+    /**
      * Download a file
      * Triggers browser download via hidden link
      */
@@ -201,9 +233,12 @@ const API = {
             const blob = await response.blob();
             const url = window.URL.createObjectURL(blob);
 
+            // Get unique filename for duplicates
+            const uniqueName = this.getUniqueFilename(fileName);
+
             const a = document.createElement('a');
             a.href = url;
-            a.download = fileName;
+            a.download = uniqueName;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
