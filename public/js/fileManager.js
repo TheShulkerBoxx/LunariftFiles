@@ -506,12 +506,155 @@ const FileManager = {
         try {
             const info = await API.getStorageInfo();
             if (info) {
-                const message = `Files: ${info.fileCount} | Folders: ${info.folderCount} | Metadata: ${info.metadataSize.megabytes} MB (${info.metadataSize.percentage}%)`;
-                UI.showNotification(message, 'info');
+                this.displayStorageModal(info);
             }
         } catch (error) {
             UI.showNotification('Failed to get storage info', 'error');
         }
+    },
+
+    /**
+     * Display storage info in a detailed modal
+     */
+    displayStorageModal(info) {
+        // Remove existing modal if any
+        const existing = document.getElementById('storageInfoModal');
+        if (existing) existing.remove();
+
+        const modal = document.createElement('div');
+        modal.id = 'storageInfoModal';
+        modal.className = 'modal active';
+
+        // Build breakdown rows
+        const breakdownRows = Object.entries(info.breakdown)
+            .filter(([_, data]) => data.count > 0)
+            .sort((a, b) => b[1].size - a[1].size)
+            .map(([type, data]) => {
+                const icons = {
+                    images: 'fa-image',
+                    videos: 'fa-video',
+                    audio: 'fa-music',
+                    documents: 'fa-file-alt',
+                    code: 'fa-code',
+                    archives: 'fa-file-archive',
+                    other: 'fa-file'
+                };
+                const colors = {
+                    images: '#22c55e',
+                    videos: '#a855f7',
+                    audio: '#ec4899',
+                    documents: '#3b82f6',
+                    code: '#eab308',
+                    archives: '#f59e0b',
+                    other: '#64748b'
+                };
+                return `
+                    <div class="storage-breakdown-row">
+                        <div class="storage-type">
+                            <i class="fas ${icons[type]}" style="color: ${colors[type]}"></i>
+                            <span>${type.charAt(0).toUpperCase() + type.slice(1)}</span>
+                        </div>
+                        <div class="storage-stats">
+                            <span class="storage-count">${data.count} files</span>
+                            <span class="storage-size">${UI.formatBytes(data.size)}</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+        // Build largest files list
+        const largestFilesRows = info.largestFiles.map(f => `
+            <div class="storage-file-row">
+                <span class="storage-file-name" title="${f.path}${f.name}">${f.name}</span>
+                <span class="storage-file-size">${UI.formatBytes(f.size)}</span>
+            </div>
+        `).join('') || '<div class="storage-empty">No files yet</div>';
+
+        // Build recent files list
+        const recentFilesRows = info.recentFiles.map(f => `
+            <div class="storage-file-row">
+                <span class="storage-file-name">${f.name}</span>
+                <span class="storage-file-date">${UI.formatDate(f.addedAt)}</span>
+            </div>
+        `).join('') || '<div class="storage-empty">No files yet</div>';
+
+        modal.innerHTML = `
+            <div class="modal-content storage-modal">
+                <div class="storage-header">
+                    <h3><i class="fas fa-chart-pie"></i> Storage Information</h3>
+                    <button class="storage-close-btn"><i class="fas fa-times"></i></button>
+                </div>
+
+                <div class="storage-summary">
+                    <div class="storage-stat-card">
+                        <div class="storage-stat-value">${info.summary.totalStorage.formatted}</div>
+                        <div class="storage-stat-label">Total Storage</div>
+                    </div>
+                    <div class="storage-stat-card">
+                        <div class="storage-stat-value">${info.summary.fileCount}</div>
+                        <div class="storage-stat-label">Files</div>
+                    </div>
+                    <div class="storage-stat-card">
+                        <div class="storage-stat-value">${info.summary.folderCount}</div>
+                        <div class="storage-stat-label">Folders</div>
+                    </div>
+                    <div class="storage-stat-card">
+                        <div class="storage-stat-value">${info.summary.averageFileSize.formatted}</div>
+                        <div class="storage-stat-label">Avg File Size</div>
+                    </div>
+                </div>
+
+                ${info.deduplication.referencesCount > 0 ? `
+                <div class="storage-dedup">
+                    <div class="storage-dedup-icon"><i class="fas fa-compress-arrows-alt"></i></div>
+                    <div class="storage-dedup-info">
+                        <div class="storage-dedup-title">Deduplication Savings</div>
+                        <div class="storage-dedup-value">${info.deduplication.savingsFormatted} saved (${info.deduplication.savingsPercentage}%)</div>
+                        <div class="storage-dedup-detail">${info.deduplication.referencesCount} duplicate files detected</div>
+                    </div>
+                </div>
+                ` : ''}
+
+                <div class="storage-sections">
+                    <div class="storage-section">
+                        <h4><i class="fas fa-folder-open"></i> Storage by Type</h4>
+                        <div class="storage-breakdown">
+                            ${breakdownRows || '<div class="storage-empty">No files yet</div>'}
+                        </div>
+                    </div>
+
+                    <div class="storage-section">
+                        <h4><i class="fas fa-weight-hanging"></i> Largest Files</h4>
+                        <div class="storage-files-list">
+                            ${largestFilesRows}
+                        </div>
+                    </div>
+
+                    <div class="storage-section">
+                        <h4><i class="fas fa-clock"></i> Recent Uploads</h4>
+                        <div class="storage-files-list">
+                            ${recentFilesRows}
+                        </div>
+                    </div>
+                </div>
+
+                <div class="storage-footer">
+                    <div class="storage-metadata">
+                        <i class="fas fa-database"></i>
+                        Metadata: ${info.metadata.formatted} (${info.metadata.percentage}% of limit)
+                    </div>
+                    ${info.warning ? `<div class="storage-warning"><i class="fas fa-exclamation-triangle"></i> ${info.warning}</div>` : ''}
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        // Close handlers
+        modal.querySelector('.storage-close-btn').onclick = () => modal.remove();
+        modal.onclick = (e) => {
+            if (e.target === modal) modal.remove();
+        };
     },
 
     /**

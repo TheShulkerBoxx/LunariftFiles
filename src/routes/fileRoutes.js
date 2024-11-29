@@ -37,19 +37,115 @@ router.get('/sync', (req, res) => {
 
 /**
  * GET /api/storage-info
- * Get storage statistics for authenticated user
+ * Get detailed storage statistics for authenticated user
  */
 router.get('/storage-info', (req, res) => {
     const { getDirectorySize } = require('../services/discord/metadataStorage');
     const sizeInfo = getDirectorySize(req.userEnv.state);
+    const files = req.userEnv.state.files;
+    const folders = req.userEnv.state.folders;
+
+    // Calculate total storage used (sum of all file sizes)
+    const totalStorageBytes = files.reduce((sum, f) => sum + (f.size || 0), 0);
+
+    // Calculate actual storage (excluding dedup references)
+    const actualStorageBytes = files
+        .filter(f => !f.isReference)
+        .reduce((sum, f) => sum + (f.size || 0), 0);
+
+    // Dedup savings
+    const dedupSavingsBytes = totalStorageBytes - actualStorageBytes;
+    const dedupCount = files.filter(f => f.isReference).length;
+
+    // File type breakdown
+    const typeCategories = {
+        images: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico', 'heic', 'heif', 'tiff'],
+        videos: ['mp4', 'webm', 'mov', 'mkv', 'avi', 'wmv', 'flv', 'm4v'],
+        audio: ['mp3', 'wav', 'ogg', 'flac', 'aac', 'm4a', 'wma'],
+        documents: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'md', 'rtf', 'odt'],
+        code: ['js', 'ts', 'jsx', 'tsx', 'py', 'java', 'cpp', 'c', 'h', 'cs', 'go', 'rb', 'php', 'html', 'css', 'json', 'xml', 'yaml', 'yml', 'sh'],
+        archives: ['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz', 'tgz']
+    };
+
+    const breakdown = {
+        images: { count: 0, size: 0 },
+        videos: { count: 0, size: 0 },
+        audio: { count: 0, size: 0 },
+        documents: { count: 0, size: 0 },
+        code: { count: 0, size: 0 },
+        archives: { count: 0, size: 0 },
+        other: { count: 0, size: 0 }
+    };
+
+    files.forEach(file => {
+        const ext = (file.name || '').split('.').pop().toLowerCase();
+        let category = 'other';
+
+        for (const [cat, exts] of Object.entries(typeCategories)) {
+            if (exts.includes(ext)) {
+                category = cat;
+                break;
+            }
+        }
+
+        breakdown[category].count++;
+        breakdown[category].size += file.size || 0;
+    });
+
+    // Get largest files (top 5)
+    const largestFiles = [...files]
+        .sort((a, b) => (b.size || 0) - (a.size || 0))
+        .slice(0, 5)
+        .map(f => ({
+            name: f.name,
+            size: f.size,
+            path: f.path
+        }));
+
+    // Recent files (last 5 by addedAt)
+    const recentFiles = [...files]
+        .sort((a, b) => new Date(b.addedAt || 0) - new Date(a.addedAt || 0))
+        .slice(0, 5)
+        .map(f => ({
+            name: f.name,
+            size: f.size,
+            addedAt: f.addedAt
+        }));
+
+    // Average file size
+    const avgFileSize = files.length > 0 ? totalStorageBytes / files.length : 0;
 
     res.json({
-        fileCount: req.userEnv.state.files.length,
-        folderCount: req.userEnv.state.folders.length,
-        metadataSize: {
+        summary: {
+            fileCount: files.length,
+            folderCount: folders.length,
+            totalStorage: {
+                bytes: totalStorageBytes,
+                formatted: formatBytes(totalStorageBytes)
+            },
+            actualStorage: {
+                bytes: actualStorageBytes,
+                formatted: formatBytes(actualStorageBytes)
+            },
+            averageFileSize: {
+                bytes: Math.round(avgFileSize),
+                formatted: formatBytes(avgFileSize)
+            }
+        },
+        deduplication: {
+            referencesCount: dedupCount,
+            savingsBytes: dedupSavingsBytes,
+            savingsFormatted: formatBytes(dedupSavingsBytes),
+            savingsPercentage: totalStorageBytes > 0
+                ? ((dedupSavingsBytes / totalStorageBytes) * 100).toFixed(1)
+                : '0'
+        },
+        breakdown,
+        largestFiles,
+        recentFiles,
+        metadata: {
             bytes: sizeInfo.bytes,
-            kilobytes: sizeInfo.kb,
-            megabytes: sizeInfo.mb,
+            formatted: sizeInfo.mb + ' MB',
             percentage: sizeInfo.percentage,
             needsChunking: sizeInfo.needsChunking
         },
@@ -57,6 +153,15 @@ router.get('/storage-info', (req, res) => {
             'Your metadata is getting large. Consider archiving old files.' : null
     });
 });
+
+// Helper function for formatting bytes
+function formatBytes(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
 
 /**
  * GET /api/download/:id
@@ -122,8 +227,13 @@ router.get('/download/:id', async (req, res) => {
 /**
  * POST /api/upload
  * Upload files with streaming (no local storage)
+ * Extended timeout for large files
  */
 router.post('/upload', (req, res) => {
+    // Extend timeout for large file uploads (10 minutes)
+    req.setTimeout(600000);
+    res.setTimeout(600000);
+
     const username = req.username;
     const userEnv = req.userEnv;
 
@@ -212,8 +322,13 @@ router.post('/upload', (req, res) => {
 /**
  * POST /api/upload-batch
  * Batch upload with parallel processing
+ * Extended timeout for large files
  */
 router.post('/upload-batch', (req, res) => {
+    // Extend timeout for large file uploads (10 minutes)
+    req.setTimeout(600000);
+    res.setTimeout(600000);
+
     const username = req.username;
     const userEnv = req.userEnv;
 
