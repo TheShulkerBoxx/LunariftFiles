@@ -6,6 +6,7 @@ const express = require('express');
 const busboy = require('busboy');
 const authMiddleware = require('../middleware/authMiddleware');
 const { processFileUpload, processBatchUpload } = require('../services/files/uploadService');
+const { processStreamingUpload } = require('../services/files/streamingUploadService');
 const { downloadFile, streamDownloadFile, getContentType } = require('../services/files/downloadService');
 const { createFolder, deleteItem, nukeAllFiles, getFileList, moveItem } = require('../services/files/fileService');
 const { saveUserEnv } = require('../services/discord/channels');
@@ -386,6 +387,83 @@ router.post('/upload-batch', (req, res) => {
 
     bb.on('error', (error) => {
         logger.error('Busboy error:', error);
+        res.status(500).json({ error: 'Upload parsing failed' });
+    });
+
+    req.pipe(bb);
+});
+
+/**
+ * POST /api/upload-stream
+ * Streaming upload for large files (>50MB)
+ * Uploads chunks to Discord as they arrive without loading entire file in memory
+ */
+router.post('/upload-stream', (req, res) => {
+    // Extended timeout for streaming uploads (30 minutes for very large files)
+    req.setTimeout(1800000);
+    res.setTimeout(1800000);
+
+    const username = req.username;
+    const userEnv = req.userEnv;
+
+    const bb = busboy({
+        headers: req.headers,
+        limits: { fileSize: config.upload.maxFileSize }
+    });
+
+    let targetPath = '/';
+    let currentFileName = null;
+    let streamingPromise = null;
+
+    bb.on('field', (name, val) => {
+        if (name === 'path') targetPath = val;
+        logger.debug(`[StreamUpload] Field: ${name} = "${val}"`);
+    });
+
+    bb.on('file', (name, file, info) => {
+        const { filename } = info;
+        currentFileName = filename;
+
+        logger.info(`[StreamUpload] Starting streaming upload: ${filename}`);
+
+        // Process file stream directly without buffering
+        streamingPromise = processStreamingUpload(
+            username,
+            userEnv,
+            file,
+            filename,
+            targetPath,
+            (chunkNum, totalBytes) => {
+                logger.debug(`[StreamUpload] Progress: chunk ${chunkNum}, ${totalBytes} bytes`);
+            }
+        );
+    });
+
+    bb.on('close', async () => {
+        try {
+            if (streamingPromise) {
+                const result = await streamingPromise;
+                logger.info(`[StreamUpload] Complete: ${result.name} (${result.chunks} chunks, ${(result.size / 1024 / 1024).toFixed(2)}MB)`);
+
+                res.json({
+                    success: true,
+                    uploaded: 1,
+                    name: result.name,
+                    path: result.path,
+                    size: result.size,
+                    chunks: result.chunks
+                });
+            } else {
+                res.status(400).json({ error: 'No file received' });
+            }
+        } catch (error) {
+            logger.error('[StreamUpload] Failed:', error);
+            res.status(500).json({ error: 'Streaming upload failed: ' + error.message });
+        }
+    });
+
+    bb.on('error', (error) => {
+        logger.error('[StreamUpload] Busboy error:', error);
         res.status(500).json({ error: 'Upload parsing failed' });
     });
 

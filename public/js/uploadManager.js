@@ -7,7 +7,8 @@ const UploadManager = {
     MAX_PARALLEL_UPLOADS: 3,
     MAX_RETRIES: 3,
     RETRY_DELAY_BASE: 1000,
-    LARGE_FILE_THRESHOLD: 25 * 1024 * 1024, // 25MB
+    LARGE_FILE_THRESHOLD: 25 * 1024 * 1024, // 25MB - warning threshold
+    STREAMING_THRESHOLD: 50 * 1024 * 1024,  // 50MB - use streaming upload
     failedUploads: new Map(), // Store failed upload items for retry
 
     /**
@@ -225,12 +226,20 @@ const UploadManager = {
         this.updateUI();
 
         try {
-            const result = await API.uploadFile(
-                item.file,
-                item.path,
-                item.batchIndex,
-                item.batchTotal
-            );
+            let result;
+
+            // Use streaming upload for large files (>50MB)
+            if (item.file.size > this.STREAMING_THRESHOLD) {
+                console.log(`[UploadManager] Using streaming upload for ${item.file.name} (${(item.file.size / 1024 / 1024).toFixed(2)}MB)`);
+                result = await API.uploadFileStream(item.file, item.path);
+            } else {
+                result = await API.uploadFile(
+                    item.file,
+                    item.path,
+                    item.batchIndex,
+                    item.batchTotal
+                );
+            }
 
             if (!result) {
                 throw new Error('Upload failed');
