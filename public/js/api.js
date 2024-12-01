@@ -118,11 +118,13 @@ const API = {
     /**
      * Upload large file using streaming (for files >50MB)
      * Uses streaming endpoint that uploads chunks to Discord as they arrive
+     * IMPORTANT: path must be appended BEFORE file so server receives it first
      */
     async uploadFileStream(file, path) {
         const formData = new FormData();
-        formData.append('file', file);
+        // Path MUST come before file - multipart sends in append order
         formData.append('path', path);
+        formData.append('file', file);
 
         const response = await this.request('/api/upload-stream', {
             method: 'POST',

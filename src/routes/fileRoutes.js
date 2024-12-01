@@ -397,6 +397,7 @@ router.post('/upload-batch', (req, res) => {
  * POST /api/upload-stream
  * Streaming upload for large files (>50MB)
  * Uploads chunks to Discord as they arrive without loading entire file in memory
+ * IMPORTANT: Client must send 'path' field BEFORE 'file' in FormData
  */
 router.post('/upload-stream', (req, res) => {
     // Extended timeout for streaming uploads (30 minutes for very large files)
@@ -411,39 +412,100 @@ router.post('/upload-stream', (req, res) => {
         limits: { fileSize: config.upload.maxFileSize }
     });
 
-    let targetPath = '/';
-    let currentFileName = null;
+    let targetPath = null;  // Start as null to detect if path arrived
+    let pendingFile = null; // Store file info if it arrives before path
     let streamingPromise = null;
+    let pathReceived = false;
 
     bb.on('field', (name, val) => {
-        if (name === 'path') targetPath = val;
+        if (name === 'path') {
+            targetPath = val || '/';
+            pathReceived = true;
+            logger.info(`[StreamUpload] Path received: "${targetPath}"`);
+
+            // If file was waiting for path, start processing now
+            if (pendingFile && !streamingPromise) {
+                logger.info(`[StreamUpload] Starting deferred upload for: ${pendingFile.filename}`);
+                streamingPromise = processStreamingUpload(
+                    username,
+                    userEnv,
+                    pendingFile.stream,
+                    pendingFile.filename,
+                    targetPath,
+                    (chunkNum, totalBytes) => {
+                        logger.debug(`[StreamUpload] Progress: chunk ${chunkNum}, ${totalBytes} bytes`);
+                    }
+                );
+            }
+        }
         logger.debug(`[StreamUpload] Field: ${name} = "${val}"`);
     });
 
     bb.on('file', (name, file, info) => {
         const { filename } = info;
-        currentFileName = filename;
 
-        logger.info(`[StreamUpload] Starting streaming upload: ${filename}`);
+        if (pathReceived && targetPath !== null) {
+            // Path already received - start immediately
+            logger.info(`[StreamUpload] Starting streaming upload: ${filename} to ${targetPath}`);
+            streamingPromise = processStreamingUpload(
+                username,
+                userEnv,
+                file,
+                filename,
+                targetPath,
+                (chunkNum, totalBytes) => {
+                    logger.debug(`[StreamUpload] Progress: chunk ${chunkNum}, ${totalBytes} bytes`);
+                }
+            );
+        } else {
+            // Path not yet received - defer processing
+            logger.warn(`[StreamUpload] File arrived before path - deferring: ${filename}`);
+            pendingFile = { stream: file, filename };
 
-        // Process file stream directly without buffering
-        streamingPromise = processStreamingUpload(
-            username,
-            userEnv,
-            file,
-            filename,
-            targetPath,
-            (chunkNum, totalBytes) => {
-                logger.debug(`[StreamUpload] Progress: chunk ${chunkNum}, ${totalBytes} bytes`);
-            }
-        );
+            // Pause the stream until we get the path
+            file.pause();
+
+            // Set a timeout - if path doesn't arrive in 5 seconds, use default
+            setTimeout(() => {
+                if (!pathReceived && pendingFile && !streamingPromise) {
+                    logger.warn(`[StreamUpload] Path timeout - using default "/" for: ${filename}`);
+                    targetPath = '/';
+                    file.resume();
+                    streamingPromise = processStreamingUpload(
+                        username,
+                        userEnv,
+                        file,
+                        filename,
+                        targetPath,
+                        (chunkNum, totalBytes) => {
+                            logger.debug(`[StreamUpload] Progress: chunk ${chunkNum}, ${totalBytes} bytes`);
+                        }
+                    );
+                }
+            }, 5000);
+        }
     });
 
     bb.on('close', async () => {
         try {
+            // Resume paused file stream if path was received
+            if (pendingFile && pathReceived && !streamingPromise) {
+                pendingFile.stream.resume();
+                streamingPromise = processStreamingUpload(
+                    username,
+                    userEnv,
+                    pendingFile.stream,
+                    pendingFile.filename,
+                    targetPath || '/',
+                    (chunkNum, totalBytes) => {
+                        logger.debug(`[StreamUpload] Progress: chunk ${chunkNum}, ${totalBytes} bytes`);
+                    }
+                );
+            }
+
             if (streamingPromise) {
                 const result = await streamingPromise;
-                logger.info(`[StreamUpload] Complete: ${result.name} (${result.chunks} chunks, ${(result.size / 1024 / 1024).toFixed(2)}MB)`);
+                logger.info(`[StreamUpload] Complete: ${result.name} -> ${result.path} (${result.chunks} chunks, ${(result.size / 1024 / 1024).toFixed(2)}MB)`);
 
                 res.json({
                     success: true,
