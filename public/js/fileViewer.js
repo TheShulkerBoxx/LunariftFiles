@@ -105,7 +105,9 @@ const FileViewer = {
             'mp3', 'wav', 'ogg', 'flac',
             // Documents
             'pdf', 'txt', 'md', 'json', 'js', 'css', 'html', 'xml', 'log', 'ini',
-            'conf', 'yml', 'yaml', 'sh', 'env', 'docx'
+            'conf', 'yml', 'yaml', 'sh', 'env', 'docx',
+            // Web archives
+            'mhtml', 'mht'
         ];
     },
 
@@ -376,6 +378,19 @@ const FileViewer = {
             this.renderDOCX(file);
         }
 
+        // --- MHTML/MHT Web Archives ---
+        else if (['mhtml', 'mht'].includes(ext)) {
+            content.innerHTML = `
+                <div class="viewer-mhtml-container">
+                    <div class="viewer-loading">
+                        <i class="fas fa-spinner fa-spin"></i>
+                        <p>Loading web archive...</p>
+                    </div>
+                </div>
+            `;
+            this.renderMHTML(file);
+        }
+
         // --- UNSUPPORTED ---
         else {
             content.innerHTML = `
@@ -623,6 +638,156 @@ const FileViewer = {
             console.error('DOCX Error:', error);
             this.showError('Failed to load document');
         }
+    },
+
+    /**
+     * Render MHTML/MHT web archive
+     */
+    async renderMHTML(file) {
+        const content = document.getElementById('viewerContent');
+
+        try {
+            let text;
+            const cached = this.getCachedBlob(file.id);
+            if (cached) {
+                text = await cached.text();
+            } else {
+                const url = this.getFileURL(file, true);
+                const res = await fetch(url);
+                text = await res.text();
+            }
+
+            // Parse MHTML format
+            const parsed = this.parseMHTML(text);
+
+            if (!parsed.html) {
+                throw new Error('Could not extract HTML from MHTML file');
+            }
+
+            // Create a blob URL for the processed HTML
+            const htmlBlob = new Blob([parsed.html], { type: 'text/html' });
+            const htmlUrl = URL.createObjectURL(htmlBlob);
+
+            content.innerHTML = `
+                <div class="viewer-mhtml-container">
+                    <iframe
+                        id="mhtml-frame"
+                        src="${htmlUrl}"
+                        class="viewer-mhtml"
+                        sandbox="allow-same-origin"
+                    ></iframe>
+                </div>
+            `;
+
+            // Clean up blob URL when viewer closes
+            const frame = document.getElementById('mhtml-frame');
+            frame.onload = () => {
+                // Revoke after a delay to ensure it's loaded
+                setTimeout(() => URL.revokeObjectURL(htmlUrl), 1000);
+            };
+
+        } catch (error) {
+            console.error('MHTML Error:', error);
+            this.showError('Failed to load web archive');
+        }
+    },
+
+    /**
+     * Parse MHTML file and extract HTML with embedded resources
+     */
+    parseMHTML(mhtmlContent) {
+        // Find the boundary string
+        const boundaryMatch = mhtmlContent.match(/boundary="?([^"\r\n]+)"?/i);
+        if (!boundaryMatch) {
+            // Try to find HTML directly if no boundary (simple case)
+            const htmlMatch = mhtmlContent.match(/<html[\s\S]*<\/html>/i);
+            return { html: htmlMatch ? htmlMatch[0] : null, resources: {} };
+        }
+
+        const boundary = boundaryMatch[1];
+        const parts = mhtmlContent.split('--' + boundary);
+
+        const resources = {};
+        let mainHtml = null;
+
+        for (const part of parts) {
+            if (part.trim() === '' || part.trim() === '--') continue;
+
+            // Parse headers
+            const headerEndIndex = part.indexOf('\r\n\r\n');
+            if (headerEndIndex === -1) continue;
+
+            const headers = part.substring(0, headerEndIndex);
+            const body = part.substring(headerEndIndex + 4);
+
+            // Get content type and location
+            const contentTypeMatch = headers.match(/Content-Type:\s*([^\r\n;]+)/i);
+            const contentLocationMatch = headers.match(/Content-Location:\s*([^\r\n]+)/i);
+            const contentTransferEncodingMatch = headers.match(/Content-Transfer-Encoding:\s*([^\r\n]+)/i);
+
+            const contentType = contentTypeMatch ? contentTypeMatch[1].trim() : '';
+            const contentLocation = contentLocationMatch ? contentLocationMatch[1].trim() : '';
+            const encoding = contentTransferEncodingMatch ? contentTransferEncodingMatch[1].trim().toLowerCase() : '';
+
+            // Decode body if needed
+            let decodedBody = body;
+            if (encoding === 'base64') {
+                try {
+                    decodedBody = atob(body.replace(/\s/g, ''));
+                } catch (e) {
+                    decodedBody = body;
+                }
+            } else if (encoding === 'quoted-printable') {
+                decodedBody = this.decodeQuotedPrintable(body);
+            }
+
+            // Store resource or identify main HTML
+            if (contentType.includes('text/html')) {
+                if (!mainHtml) {
+                    mainHtml = decodedBody;
+                }
+            }
+
+            if (contentLocation) {
+                // Create data URL for embedded resources
+                if (encoding === 'base64' && !contentType.includes('text/')) {
+                    resources[contentLocation] = `data:${contentType};base64,${body.replace(/\s/g, '')}`;
+                } else {
+                    resources[contentLocation] = decodedBody;
+                }
+            }
+        }
+
+        // Replace resource references in HTML with data URLs
+        if (mainHtml && Object.keys(resources).length > 0) {
+            for (const [location, data] of Object.entries(resources)) {
+                // Escape special regex characters in location
+                const escapedLocation = location.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+                // Replace various URL formats
+                mainHtml = mainHtml.replace(
+                    new RegExp(`(src|href)=["']${escapedLocation}["']`, 'gi'),
+                    `$1="${data}"`
+                );
+                mainHtml = mainHtml.replace(
+                    new RegExp(`url\\(["']?${escapedLocation}["']?\\)`, 'gi'),
+                    `url("${data}")`
+                );
+            }
+        }
+
+        return { html: mainHtml, resources };
+    },
+
+    /**
+     * Decode quoted-printable encoding
+     */
+    decodeQuotedPrintable(str) {
+        return str
+            .replace(/=\r?\n/g, '') // Remove soft line breaks
+            .replace(/=([0-9A-Fa-f]{2})/g, (match, hex) => {
+                return String.fromCharCode(parseInt(hex, 16));
+            });
     },
 
     /**
