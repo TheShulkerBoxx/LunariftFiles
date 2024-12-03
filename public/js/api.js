@@ -136,6 +136,87 @@ const API = {
     },
 
     /**
+     * Upload very large file using chunked upload (for files that exceed proxy limits)
+     * Splits file into 96MB chunks and uploads sequentially to avoid 413 errors
+     * @param {File} file - File to upload
+     * @param {string} path - Target path
+     * @param {Function} onProgress - Progress callback (chunkIndex, totalChunks, percent)
+     * @returns {Promise<Object>} Upload result
+     */
+    async uploadFileChunked(file, path, onProgress = null) {
+        const CHUNK_SIZE = 96 * 1024 * 1024; // 96MB chunks (multiple of 8MB for Discord)
+        const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+
+        console.log(`[API] Starting chunked upload: ${file.name} (${totalChunks} chunks, ${(file.size / 1024 / 1024).toFixed(2)}MB)`);
+
+        // Step 1: Initialize the chunked upload session
+        const initResponse = await this.request('/api/upload-chunked/init', {
+            method: 'POST',
+            body: JSON.stringify({
+                filename: file.name,
+                totalChunks: totalChunks,
+                totalSize: file.size,
+                path: path
+            })
+        });
+
+        if (!initResponse) {
+            throw new Error('Failed to initialize chunked upload');
+        }
+
+        const { uploadId } = await initResponse.json();
+        console.log(`[API] Chunked upload initialized: ${uploadId}`);
+
+        // Step 2: Upload each chunk
+        for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+            const start = chunkIndex * CHUNK_SIZE;
+            const end = Math.min(start + CHUNK_SIZE, file.size);
+            const chunk = file.slice(start, end);
+
+            const formData = new FormData();
+            formData.append('uploadId', uploadId);
+            formData.append('chunkIndex', chunkIndex.toString());
+            formData.append('chunk', chunk, `chunk_${chunkIndex}`);
+
+            console.log(`[API] Uploading chunk ${chunkIndex + 1}/${totalChunks} (${((end - start) / 1024 / 1024).toFixed(2)}MB)`);
+
+            const chunkResponse = await this.request('/api/upload-chunked/chunk', {
+                method: 'POST',
+                body: formData
+            });
+
+            if (!chunkResponse) {
+                // Try to cancel the upload on failure
+                await this.request(`/api/upload-chunked/${uploadId}`, { method: 'DELETE' }).catch(() => {});
+                throw new Error(`Failed to upload chunk ${chunkIndex + 1}`);
+            }
+
+            const chunkResult = await chunkResponse.json();
+
+            // Report progress
+            if (onProgress) {
+                onProgress(chunkIndex + 1, totalChunks, chunkResult.progress);
+            }
+        }
+
+        // Step 3: Finalize the upload
+        console.log(`[API] Finalizing chunked upload: ${uploadId}`);
+        const finalizeResponse = await this.request('/api/upload-chunked/finalize', {
+            method: 'POST',
+            body: JSON.stringify({ uploadId })
+        });
+
+        if (!finalizeResponse) {
+            throw new Error('Failed to finalize chunked upload');
+        }
+
+        const result = await finalizeResponse.json();
+        console.log(`[API] Chunked upload complete: ${file.name}`);
+
+        return result;
+    },
+
+    /**
      * Create new folder
      */
     async createFolder(path) {

@@ -9,6 +9,7 @@ const UploadManager = {
     RETRY_DELAY_BASE: 1000,
     LARGE_FILE_THRESHOLD: 25 * 1024 * 1024, // 25MB - warning threshold
     STREAMING_THRESHOLD: 50 * 1024 * 1024,  // 50MB - use streaming upload
+    CHUNKED_THRESHOLD: 90 * 1024 * 1024,    // 90MB - use chunked upload (avoid 413 proxy errors)
     failedUploads: new Map(), // Store failed upload items for retry
 
     /**
@@ -228,8 +229,17 @@ const UploadManager = {
         try {
             let result;
 
-            // Use streaming upload for large files (>50MB)
-            if (item.file.size > this.STREAMING_THRESHOLD) {
+            // Use chunked upload for very large files (>90MB) to avoid proxy 413 errors
+            if (item.file.size > this.CHUNKED_THRESHOLD) {
+                console.log(`[UploadManager] Using chunked upload for ${item.file.name} (${(item.file.size / 1024 / 1024).toFixed(2)}MB)`);
+                result = await API.uploadFileChunked(item.file, item.path, (chunkNum, totalChunks, percent) => {
+                    // Update progress during chunked upload
+                    upload.progress = Math.round((chunkNum / totalChunks) * 90); // Reserve last 10% for finalization
+                    this.updateUI();
+                });
+            }
+            // Use streaming upload for large files (>50MB but <=90MB)
+            else if (item.file.size > this.STREAMING_THRESHOLD) {
                 console.log(`[UploadManager] Using streaming upload for ${item.file.name} (${(item.file.size / 1024 / 1024).toFixed(2)}MB)`);
                 result = await API.uploadFileStream(item.file, item.path);
             } else {

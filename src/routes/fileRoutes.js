@@ -7,6 +7,7 @@ const busboy = require('busboy');
 const authMiddleware = require('../middleware/authMiddleware');
 const { processFileUpload, processBatchUpload } = require('../services/files/uploadService');
 const { processStreamingUpload } = require('../services/files/streamingUploadService');
+const { initChunkedUpload, addChunk, isUploadComplete, finalizeUpload, cancelUpload, getUploadStatus } = require('../services/files/chunkedUploadService');
 const { downloadFile, streamDownloadFile, getContentType } = require('../services/files/downloadService');
 const { createFolder, deleteItem, nukeAllFiles, getFileList, moveItem } = require('../services/files/fileService');
 const { saveUserEnv } = require('../services/discord/channels');
@@ -593,6 +594,162 @@ router.post('/move', async (req, res) => {
         logger.error('Move item failed:', error);
         res.status(500).json({ error: 'Failed to move item: ' + error.message });
     }
+});
+
+/**
+ * POST /api/upload-chunked/init
+ * Initialize a chunked upload session for large files
+ * Body: { filename, totalChunks, totalSize, path }
+ */
+router.post('/upload-chunked/init', (req, res) => {
+    try {
+        const { filename, totalChunks, totalSize, path } = req.body;
+
+        if (!filename || !totalChunks || !totalSize) {
+            return res.status(400).json({
+                error: 'Missing required fields: filename, totalChunks, totalSize'
+            });
+        }
+
+        // Generate unique upload ID
+        const uploadId = `${req.username}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+        const result = initChunkedUpload(uploadId, {
+            filename,
+            totalChunks,
+            totalSize,
+            path: path || '/',
+            username: req.username
+        });
+
+        res.json(result);
+    } catch (error) {
+        logger.error('Chunked upload init failed:', error);
+        res.status(500).json({ error: 'Failed to initialize chunked upload: ' + error.message });
+    }
+});
+
+/**
+ * POST /api/upload-chunked/chunk
+ * Upload a single chunk
+ * FormData: uploadId, chunkIndex, chunk (file)
+ */
+router.post('/upload-chunked/chunk', (req, res) => {
+    // Extended timeout for chunk uploads
+    req.setTimeout(300000);
+    res.setTimeout(300000);
+
+    const bb = busboy({
+        headers: req.headers,
+        limits: { fileSize: 100 * 1024 * 1024 } // 100MB per chunk max
+    });
+
+    let uploadId = null;
+    let chunkIndex = null;
+    let chunkBuffer = null;
+
+    bb.on('field', (name, val) => {
+        if (name === 'uploadId') uploadId = val;
+        if (name === 'chunkIndex') chunkIndex = parseInt(val);
+    });
+
+    bb.on('file', (name, file, info) => {
+        const chunks = [];
+        file.on('data', (data) => chunks.push(data));
+        file.on('end', () => {
+            chunkBuffer = Buffer.concat(chunks);
+        });
+    });
+
+    bb.on('close', () => {
+        try {
+            if (!uploadId || chunkIndex === null || !chunkBuffer) {
+                return res.status(400).json({
+                    error: 'Missing required fields: uploadId, chunkIndex, chunk'
+                });
+            }
+
+            const result = addChunk(uploadId, chunkIndex, chunkBuffer);
+            res.json(result);
+        } catch (error) {
+            logger.error('Chunk upload failed:', error);
+            res.status(500).json({ error: 'Failed to upload chunk: ' + error.message });
+        }
+    });
+
+    bb.on('error', (error) => {
+        logger.error('Chunk upload busboy error:', error);
+        res.status(500).json({ error: 'Chunk upload parsing failed' });
+    });
+
+    req.pipe(bb);
+});
+
+/**
+ * POST /api/upload-chunked/finalize
+ * Finalize a chunked upload after all chunks received
+ * Body: { uploadId }
+ */
+router.post('/upload-chunked/finalize', async (req, res) => {
+    // Extended timeout for finalization (processing can take a while)
+    req.setTimeout(1800000);
+    res.setTimeout(1800000);
+
+    try {
+        const { uploadId } = req.body;
+
+        if (!uploadId) {
+            return res.status(400).json({ error: 'Missing uploadId' });
+        }
+
+        // Check if upload is complete
+        if (!isUploadComplete(uploadId)) {
+            const status = getUploadStatus(uploadId);
+            if (!status) {
+                return res.status(404).json({ error: 'Upload session not found' });
+            }
+            return res.status(400).json({
+                error: 'Upload incomplete',
+                receivedChunks: status.receivedChunks,
+                totalChunks: status.totalChunks
+            });
+        }
+
+        // Finalize and process the upload
+        const result = await finalizeUpload(uploadId, req.userEnv);
+        res.json(result);
+    } catch (error) {
+        logger.error('Chunked upload finalize failed:', error);
+        res.status(500).json({ error: 'Failed to finalize upload: ' + error.message });
+    }
+});
+
+/**
+ * GET /api/upload-chunked/status/:id
+ * Get status of a chunked upload
+ */
+router.get('/upload-chunked/status/:id', (req, res) => {
+    const status = getUploadStatus(req.params.id);
+
+    if (!status) {
+        return res.status(404).json({ error: 'Upload session not found' });
+    }
+
+    res.json(status);
+});
+
+/**
+ * DELETE /api/upload-chunked/:id
+ * Cancel a chunked upload
+ */
+router.delete('/upload-chunked/:id', (req, res) => {
+    const cancelled = cancelUpload(req.params.id);
+
+    if (!cancelled) {
+        return res.status(404).json({ error: 'Upload session not found' });
+    }
+
+    res.json({ success: true, message: 'Upload cancelled' });
 });
 
 module.exports = router;
