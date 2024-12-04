@@ -8,7 +8,7 @@ const UploadManager = {
     MAX_RETRIES: 3,
     RETRY_DELAY_BASE: 1000,
     LARGE_FILE_THRESHOLD: 25 * 1024 * 1024, // 25MB - warning threshold
-    STREAMING_THRESHOLD: 50 * 1024 * 1024,  // 50MB - use streaming upload
+    STREAMING_THRESHOLD: 25 * 1024 * 1024,  // 25MB - use streaming upload
     CHUNKED_THRESHOLD: 90 * 1024 * 1024,    // 90MB - use chunked upload (avoid 413 proxy errors)
     failedUploads: new Map(), // Store failed upload items for retry
 
