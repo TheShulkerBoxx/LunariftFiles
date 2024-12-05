@@ -16,6 +16,40 @@ const logger = require('../logger');
 const CHUNK_SIZE = config.upload.chunkSize; // 8MB
 
 /**
+ * Get a unique filename by adding (1), (2), etc. if name already exists
+ */
+function getUniqueFilename(files, fileName, targetPath) {
+    const existingNames = files
+        .filter(f => f.path === targetPath)
+        .map(f => f.name.toLowerCase());
+
+    if (!existingNames.includes(fileName.toLowerCase())) {
+        return fileName;
+    }
+
+    const lastDot = fileName.lastIndexOf('.');
+    let baseName, extension;
+
+    if (lastDot === -1) {
+        baseName = fileName;
+        extension = '';
+    } else {
+        baseName = fileName.substring(0, lastDot);
+        extension = fileName.substring(lastDot);
+    }
+
+    let counter = 1;
+    let newName;
+
+    do {
+        newName = `${baseName} (${counter})${extension}`;
+        counter++;
+    } while (existingNames.includes(newName.toLowerCase()));
+
+    return newName;
+}
+
+/**
  * Create a chunking transform stream that accumulates data and emits 8MB chunks
  */
 class ChunkingStream extends Transform {
@@ -99,10 +133,17 @@ async function processStreamingUpload(username, userEnv, fileStream, fileName, r
     // Ensure parent folders exist
     ensureFoldersExist(userEnv.state, targetPath);
 
+    // Resolve filename conflicts by adding (1), (2), etc.
+    const uniqueFileName = getUniqueFilename(userEnv.state.files, fileName, targetPath);
+
+    if (uniqueFileName !== fileName) {
+        logger.info(`[StreamUpload] Filename conflict resolved: ${fileName} -> ${uniqueFileName}`);
+    }
+
     // Get Discord channel
     const channel = await client.channels.fetch(userEnv.dataId);
 
-    logger.info(`[StreamUpload] Starting ${fileName} to ${targetPath}`);
+    logger.info(`[StreamUpload] Starting ${uniqueFileName} to ${targetPath}`);
 
     const chunker = new ChunkingStream({ objectMode: true });
     let fileHash = null;
@@ -146,20 +187,10 @@ async function processStreamingUpload(username, userEnv, fileStream, fileName, r
 
         chunker.on('end', async () => {
             try {
-                // Check for deduplication (after we have the hash)
-                const existing = userEnv.state.files.find(f => f.hash === fileHash);
-
-                if (existing && messageIds.length > 0) {
-                    // We already uploaded but found a duplicate - this is rare but possible
-                    // In streaming mode, we can't check dedup before upload starts
-                    // So we'll keep the upload but mark it for potential cleanup
-                    logger.info(`[StreamUpload] Late dedup detected for ${fileName} (keeping new upload)`);
-                }
-
                 // Create file entry
                 const fileEntry = {
                     id: fileId,
-                    name: fileName,
+                    name: uniqueFileName,
                     path: targetPath,
                     size: totalBytes,
                     hash: fileHash,
@@ -172,11 +203,11 @@ async function processStreamingUpload(username, userEnv, fileStream, fileName, r
                 userEnv.state.files.push(fileEntry);
                 await saveUserEnv(username);
 
-                logger.info(`[StreamUpload] Complete: ${fileName} (${(totalBytes / 1024 / 1024).toFixed(2)}MB, ${totalChunks} chunks)`);
+                logger.info(`[StreamUpload] Complete: ${uniqueFileName} (${(totalBytes / 1024 / 1024).toFixed(2)}MB, ${totalChunks} chunks)`);
 
                 resolve({
                     success: true,
-                    name: fileName,
+                    name: uniqueFileName,
                     path: targetPath,
                     size: totalBytes,
                     chunks: totalChunks,

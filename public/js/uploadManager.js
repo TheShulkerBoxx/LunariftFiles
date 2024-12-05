@@ -127,7 +127,6 @@ const UploadManager = {
         // Process uploads in parallel batches
         let completed = 0;
         let failed = 0;
-        let deduplicated = 0;
 
         for (let i = 0; i < uploadQueue.length; i += this.MAX_PARALLEL_UPLOADS) {
             if (AppState.uploads.cancelled) break;
@@ -137,13 +136,7 @@ const UploadManager = {
             const batchPromises = batch.map(async (item) => {
                 try {
                     const result = await this.uploadFileWithRetry(item);
-
-                    if (result.deduplicated > 0) {
-                        deduplicated++;
-                    } else {
-                        completed++;
-                    }
-
+                    completed++;
                     return { success: true };
                 } catch (error) {
                     failed++;
@@ -161,7 +154,7 @@ const UploadManager = {
         if (AppState.uploads.cancelled) {
             UI.showNotification('Upload cancelled', 'info');
         } else {
-            const message = `Upload complete: ${completed} uploaded, ${deduplicated} deduplicated${failed > 0 ? `, ${failed} failed` : ''}`;
+            const message = `Upload complete: ${completed} uploaded${failed > 0 ? `, ${failed} failed` : ''}`;
             UI.showNotification(message, failed > 0 ? 'error' : 'success');
         }
 
@@ -257,7 +250,7 @@ const UploadManager = {
 
             // Update progress
             AppState.uploads.totalBytesUploaded += item.file.size;
-            upload.status = result.deduplicated > 0 ? 'dedup' : 'complete';
+            upload.status = 'complete';
             upload.progress = 100;
             this.updateUI();
 
@@ -368,7 +361,7 @@ const UploadManager = {
     updateUI() {
         const uploads = Array.from(AppState.uploads.active.values());
         const total = uploads.length;
-        const completed = uploads.filter(u => u.status === 'complete' || u.status === 'dedup').length;
+        const completed = uploads.filter(u => u.status === 'complete').length;
         const failed = uploads.filter(u => u.status === 'failed').length;
 
         // Update title
@@ -414,11 +407,6 @@ const UploadManager = {
                     break;
                 case 'complete':
                     statusIcon = '<i class="fas fa-check"></i>';
-                    statusClass = 'complete';
-                    progressClass = 'complete';
-                    break;
-                case 'dedup':
-                    statusIcon = '<i class="fas fa-copy"></i>';
                     statusClass = 'complete';
                     progressClass = 'complete';
                     break;

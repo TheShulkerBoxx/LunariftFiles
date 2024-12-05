@@ -135,9 +135,9 @@ const FileViewer = {
             }
         }
 
-        // Pre-fetch small files (under 5MB) for instant viewing
+        // Pre-fetch files (under 50MB) for instant viewing
         viewable.forEach(file => {
-            if (!this.cache.has(file.id) && file.size < 5 * 1024 * 1024) {
+            if (!this.cache.has(file.id) && file.size < 50 * 1024 * 1024) {
                 this.prefetchFile(file);
             }
         });

@@ -604,17 +604,6 @@ const FileManager = {
                     </div>
                 </div>
 
-                ${info.deduplication.referencesCount > 0 ? `
-                <div class="storage-dedup">
-                    <div class="storage-dedup-icon"><i class="fas fa-compress-arrows-alt"></i></div>
-                    <div class="storage-dedup-info">
-                        <div class="storage-dedup-title">Deduplication Savings</div>
-                        <div class="storage-dedup-value">${info.deduplication.savingsFormatted} saved (${info.deduplication.savingsPercentage}%)</div>
-                        <div class="storage-dedup-detail">${info.deduplication.referencesCount} duplicate files detected</div>
-                    </div>
-                </div>
-                ` : ''}
-
                 <div class="storage-sections">
                     <div class="storage-section">
                         <h4><i class="fas fa-folder-open"></i> Storage by Type</h4>
@@ -891,7 +880,6 @@ const FileManager = {
             (file.status === 'PENDING' ? ' pending' : '');
 
         const isPending = file.status === 'PENDING';
-        const isDedup = file.isReference;
 
         // Get file icon based on extension
         const fileIcon = this.getFileIcon(file.name);
@@ -910,7 +898,6 @@ const FileManager = {
                 <i class="fas ${fileIcon.icon} ${fileIcon.color}"></i>
                 <span class="item-name">${file.name}</span>
                 ${isPending ? '<span class="badge badge-pending">UPLOAD...</span>' : ''}
-                ${isDedup ? '<span class="badge badge-dedup">DEDUP</span>' : ''}
             </td>
             <td class="col-date">${UI.formatDate(file.addedAt)}</td>
             <td class="col-size">${UI.formatBytes(file.size)}</td>

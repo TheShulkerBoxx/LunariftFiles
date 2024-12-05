@@ -1,5 +1,5 @@
 /**
- * File upload service with deduplication
+ * File upload service
  */
 
 const { uploadFileToDiscord } = require('../discord/storage');
@@ -7,6 +7,47 @@ const { saveUserEnv } = require('../discord/channels');
 const { calculateBufferHash, generateUniqueId } = require('../../utils/hashUtils');
 const { normalizePath, ensureFoldersExist } = require('../../utils/pathUtils');
 const logger = require('../logger');
+
+/**
+ * Get a unique filename by adding (1), (2), etc. if name already exists
+ * @param {Array} files - Existing files array
+ * @param {string} fileName - Desired filename
+ * @param {string} targetPath - Target directory path
+ * @returns {string} Unique filename
+ */
+function getUniqueFilename(files, fileName, targetPath) {
+    // Check if file with same name exists in same path
+    const existingNames = files
+        .filter(f => f.path === targetPath)
+        .map(f => f.name.toLowerCase());
+
+    if (!existingNames.includes(fileName.toLowerCase())) {
+        return fileName;
+    }
+
+    // Split filename into name and extension
+    const lastDot = fileName.lastIndexOf('.');
+    let baseName, extension;
+
+    if (lastDot === -1) {
+        baseName = fileName;
+        extension = '';
+    } else {
+        baseName = fileName.substring(0, lastDot);
+        extension = fileName.substring(lastDot);
+    }
+
+    // Find the next available number
+    let counter = 1;
+    let newName;
+
+    do {
+        newName = `${baseName} (${counter})${extension}`;
+        counter++;
+    } while (existingNames.includes(newName.toLowerCase()));
+
+    return newName;
+}
 
 /**
  * Upload a file buffer to Discord storage
@@ -53,7 +94,7 @@ async function uploadFile(username, userEnv, fileBuffer, fileName, targetPath) {
 }
 
 /**
- * Process file upload with deduplication
+ * Process file upload with filename conflict resolution
  * @param {string} username - Username
  * @param {Object} userEnv - User environment object
  * @param {Buffer} fileBuffer - File buffer
@@ -63,34 +104,21 @@ async function uploadFile(username, userEnv, fileBuffer, fileName, targetPath) {
  */
 async function processFileUpload(username, userEnv, fileBuffer, fileName, rawPath) {
     const targetPath = normalizePath(rawPath);
-    
+
     // Ensure parent folders exist
     ensureFoldersExist(userEnv.state, targetPath);
 
-    const fileHash = calculateBufferHash(fileBuffer);
+    // Resolve filename conflicts by adding (1), (2), etc.
+    const uniqueFileName = getUniqueFilename(userEnv.state.files, fileName, targetPath);
 
-    // Check for deduplication
-    const existing = userEnv.state.files.find(f => f.hash === fileHash);
-
-    if (existing) {
-        // Deduplicate - just add a reference
-        const newEntry = {
-            ...existing,
-            id: generateUniqueId(),
-            name: fileName,
-            path: targetPath,
-            isReference: true,
-            addedAt: new Date().toISOString()
-        };
-        userEnv.state.files.push(newEntry);
-        logger.info(`[Dedup] ${fileName} -> ${targetPath} (matched existing file)`);
-        return { deduplicated: true, name: fileName, path: targetPath };
+    if (uniqueFileName !== fileName) {
+        logger.info(`[Upload] Filename conflict resolved: ${fileName} -> ${uniqueFileName}`);
     }
 
     // Upload new file
-    const entry = await uploadFile(username, userEnv, fileBuffer, fileName, targetPath);
-    logger.info(`[Upload] SUCCESS: ${fileName} -> ${targetPath}`);
-    return { success: true, name: fileName, path: targetPath, entry };
+    const entry = await uploadFile(username, userEnv, fileBuffer, uniqueFileName, targetPath);
+    logger.info(`[Upload] SUCCESS: ${uniqueFileName} -> ${targetPath}`);
+    return { success: true, name: uniqueFileName, path: targetPath, entry };
 }
 
 /**

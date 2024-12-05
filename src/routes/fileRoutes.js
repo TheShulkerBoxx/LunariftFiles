@@ -50,15 +50,6 @@ router.get('/storage-info', (req, res) => {
     // Calculate total storage used (sum of all file sizes)
     const totalStorageBytes = files.reduce((sum, f) => sum + (f.size || 0), 0);
 
-    // Calculate actual storage (excluding dedup references)
-    const actualStorageBytes = files
-        .filter(f => !f.isReference)
-        .reduce((sum, f) => sum + (f.size || 0), 0);
-
-    // Dedup savings
-    const dedupSavingsBytes = totalStorageBytes - actualStorageBytes;
-    const dedupCount = files.filter(f => f.isReference).length;
-
     // File type breakdown
     const typeCategories = {
         images: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico', 'heic', 'heif', 'tiff'],
@@ -125,22 +116,10 @@ router.get('/storage-info', (req, res) => {
                 bytes: totalStorageBytes,
                 formatted: formatBytes(totalStorageBytes)
             },
-            actualStorage: {
-                bytes: actualStorageBytes,
-                formatted: formatBytes(actualStorageBytes)
-            },
             averageFileSize: {
                 bytes: Math.round(avgFileSize),
                 formatted: formatBytes(avgFileSize)
             }
-        },
-        deduplication: {
-            referencesCount: dedupCount,
-            savingsBytes: dedupSavingsBytes,
-            savingsFormatted: formatBytes(dedupSavingsBytes),
-            savingsPercentage: totalStorageBytes > 0
-                ? ((dedupSavingsBytes / totalStorageBytes) * 100).toFixed(1)
-                : '0'
         },
         breakdown,
         largestFiles,
