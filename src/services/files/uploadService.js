@@ -16,12 +16,12 @@ const logger = require('../logger');
  * @returns {string} Unique filename
  */
 function getUniqueFilename(files, fileName, targetPath) {
-    // Check if file with same name exists in same path
+    // Check if file with same name exists in same path (case-sensitive)
     const existingNames = files
         .filter(f => f.path === targetPath)
-        .map(f => f.name.toLowerCase());
+        .map(f => f.name);
 
-    if (!existingNames.includes(fileName.toLowerCase())) {
+    if (!existingNames.includes(fileName)) {
         return fileName;
     }
 
@@ -44,7 +44,7 @@ function getUniqueFilename(files, fileName, targetPath) {
     do {
         newName = `${baseName} (${counter})${extension}`;
         counter++;
-    } while (existingNames.includes(newName.toLowerCase()));
+    } while (existingNames.includes(newName));
 
     return newName;
 }

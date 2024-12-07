@@ -19,11 +19,12 @@ const CHUNK_SIZE = config.upload.chunkSize; // 8MB
  * Get a unique filename by adding (1), (2), etc. if name already exists
  */
 function getUniqueFilename(files, fileName, targetPath) {
+    // Case-sensitive matching
     const existingNames = files
         .filter(f => f.path === targetPath)
-        .map(f => f.name.toLowerCase());
+        .map(f => f.name);
 
-    if (!existingNames.includes(fileName.toLowerCase())) {
+    if (!existingNames.includes(fileName)) {
         return fileName;
     }
 
@@ -44,7 +45,7 @@ function getUniqueFilename(files, fileName, targetPath) {
     do {
         newName = `${baseName} (${counter})${extension}`;
         counter++;
-    } while (existingNames.includes(newName.toLowerCase()));
+    } while (existingNames.includes(newName));
 
     return newName;
 }
