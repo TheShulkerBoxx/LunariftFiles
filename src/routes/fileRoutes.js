@@ -580,7 +580,7 @@ router.post('/move', async (req, res) => {
  * Initialize a chunked upload session for large files
  * Body: { filename, totalChunks, totalSize, path }
  */
-router.post('/upload-chunked/init', (req, res) => {
+router.post('/upload-chunked/init', async (req, res) => {
     try {
         const { filename, totalChunks, totalSize, path } = req.body;
 
@@ -593,13 +593,13 @@ router.post('/upload-chunked/init', (req, res) => {
         // Generate unique upload ID
         const uploadId = `${req.username}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
-        const result = initChunkedUpload(uploadId, {
+        const result = await initChunkedUpload(uploadId, {
             filename,
             totalChunks,
             totalSize,
             path: path || '/',
             username: req.username
-        });
+        }, req.userEnv);
 
         res.json(result);
     } catch (error) {
@@ -640,7 +640,7 @@ router.post('/upload-chunked/chunk', (req, res) => {
         });
     });
 
-    bb.on('close', () => {
+    bb.on('close', async () => {
         try {
             if (!uploadId || chunkIndex === null || !chunkBuffer) {
                 return res.status(400).json({
@@ -648,7 +648,7 @@ router.post('/upload-chunked/chunk', (req, res) => {
                 });
             }
 
-            const result = addChunk(uploadId, chunkIndex, chunkBuffer);
+            const result = await addChunk(uploadId, chunkIndex, chunkBuffer);
             res.json(result);
         } catch (error) {
             logger.error('Chunk upload failed:', error);

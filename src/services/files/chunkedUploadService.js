@@ -1,16 +1,21 @@
 /**
  * Chunked Upload Service
- * Handles reassembly of large files uploaded in chunks to bypass proxy limits (e.g., Cloudflare 100MB)
- * Chunks are stored in memory temporarily and processed when complete
+ * Handles large file uploads in chunks to bypass proxy limits (e.g., Cloudflare 100MB)
+ * Each chunk is immediately split into 8MB Discord chunks and uploaded - no RAM storage
  */
 
 const crypto = require('crypto');
-const { processFileUpload } = require('./uploadService');
+const { AttachmentBuilder } = require('discord.js');
+const { client } = require('../discord/client');
 const { saveUserEnv } = require('../discord/channels');
+const { generateUniqueId } = require('../../utils/hashUtils');
+const { normalizePath, ensureFoldersExist } = require('../../utils/pathUtils');
+const config = require('../../config/config');
 const logger = require('../logger');
 
-// In-memory storage for pending chunked uploads
-// Key: uploadId, Value: { chunks: Map<index, Buffer>, metadata: {...}, lastActivity: Date }
+const DISCORD_CHUNK_SIZE = config.upload.chunkSize; // 8MB
+
+// In-memory storage for pending chunked uploads (only metadata, not file data)
 const pendingUploads = new Map();
 
 // Cleanup interval (5 minutes)
@@ -19,46 +24,132 @@ const CLEANUP_INTERVAL = 5 * 60 * 1000;
 const UPLOAD_TIMEOUT = 30 * 60 * 1000;
 
 /**
+ * Get a unique filename by adding (1), (2), etc. if name already exists
+ */
+function getUniqueFilename(files, fileName, targetPath) {
+    const existingNames = files
+        .filter(f => f.path === targetPath)
+        .map(f => f.name);
+
+    if (!existingNames.includes(fileName)) {
+        return fileName;
+    }
+
+    const lastDot = fileName.lastIndexOf('.');
+    let baseName, extension;
+
+    if (lastDot === -1) {
+        baseName = fileName;
+        extension = '';
+    } else {
+        baseName = fileName.substring(0, lastDot);
+        extension = fileName.substring(lastDot);
+    }
+
+    let counter = 1;
+    let newName;
+
+    do {
+        newName = `${baseName} (${counter})${extension}`;
+        counter++;
+    } while (existingNames.includes(newName));
+
+    return newName;
+}
+
+/**
+ * Upload a single 8MB chunk to Discord with retry
+ */
+async function uploadDiscordChunk(channel, chunkBuffer, fileId, chunkIndex, retries = 3) {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+        try {
+            const attachment = new AttachmentBuilder(chunkBuffer, {
+                name: `part_${chunkIndex}.bin`
+            });
+
+            const msg = await channel.send({
+                content: `DATA | ${fileId} | Chunk ${chunkIndex}`,
+                files: [attachment]
+            });
+
+            return msg.id;
+        } catch (error) {
+            logger.warn(`[ChunkedUpload] Discord chunk ${chunkIndex} failed (attempt ${attempt}/${retries}): ${error.message}`);
+            if (attempt === retries) throw error;
+            await new Promise(r => setTimeout(r, 1000 * attempt));
+        }
+    }
+}
+
+/**
  * Initialize a new chunked upload session
  * @param {string} uploadId - Unique identifier for this upload
  * @param {Object} metadata - File metadata (filename, totalChunks, totalSize, path)
- * @returns {Object} Session info
+ * @param {Object} userEnv - User environment for Discord channel
+ * @returns {Promise<Object>} Session info
  */
-function initChunkedUpload(uploadId, metadata) {
+async function initChunkedUpload(uploadId, metadata, userEnv) {
     if (pendingUploads.has(uploadId)) {
         logger.warn(`[ChunkedUpload] Upload ${uploadId} already exists, resetting`);
+        pendingUploads.delete(uploadId);
     }
 
+    const targetPath = normalizePath(metadata.path || '/');
+
+    // Ensure parent folders exist
+    ensureFoldersExist(userEnv.state, targetPath);
+
+    // Resolve filename conflicts
+    const uniqueFilename = getUniqueFilename(userEnv.state.files, metadata.filename, targetPath);
+
+    if (uniqueFilename !== metadata.filename) {
+        logger.info(`[ChunkedUpload] Filename conflict resolved: ${metadata.filename} -> ${uniqueFilename}`);
+    }
+
+    // Get Discord channel
+    const channel = await client.channels.fetch(userEnv.dataId);
+
+    const fileId = generateUniqueId();
+
     pendingUploads.set(uploadId, {
-        chunks: new Map(),
         metadata: {
-            filename: metadata.filename,
+            fileId,
+            filename: uniqueFilename,
+            originalFilename: metadata.filename,
             totalChunks: parseInt(metadata.totalChunks),
             totalSize: parseInt(metadata.totalSize),
-            path: metadata.path || '/',
-            username: metadata.username
+            path: targetPath,
+            username: metadata.username,
+            channelId: userEnv.dataId
         },
-        lastActivity: Date.now(),
-        receivedBytes: 0
+        // Track Discord uploads (no file data stored)
+        messageIds: [],
+        discordChunkIndex: 0,
+        hash: crypto.createHash('sha256'),
+        receivedBytes: 0,
+        receivedChunks: 0,
+        channel,
+        lastActivity: Date.now()
     });
 
-    logger.info(`[ChunkedUpload] Initialized upload ${uploadId}: ${metadata.filename} (${metadata.totalChunks} chunks, ${(metadata.totalSize / 1024 / 1024).toFixed(2)}MB)`);
+    logger.info(`[ChunkedUpload] Initialized ${uploadId}: ${uniqueFilename} (${metadata.totalChunks} chunks, ${(metadata.totalSize / 1024 / 1024).toFixed(2)}MB)`);
 
     return {
         uploadId,
         status: 'initialized',
-        expectedChunks: parseInt(metadata.totalChunks)
+        expectedChunks: parseInt(metadata.totalChunks),
+        filename: uniqueFilename
     };
 }
 
 /**
- * Add a chunk to a pending upload
+ * Process a chunk: split into 8MB pieces and upload to Discord immediately
  * @param {string} uploadId - Upload session ID
  * @param {number} chunkIndex - Index of this chunk (0-based)
- * @param {Buffer} chunkData - Chunk data
- * @returns {Object} Status of the upload
+ * @param {Buffer} chunkData - Chunk data (up to 96MB)
+ * @returns {Promise<Object>} Status of the upload
  */
-function addChunk(uploadId, chunkIndex, chunkData) {
+async function addChunk(uploadId, chunkIndex, chunkData) {
     const upload = pendingUploads.get(uploadId);
 
     if (!upload) {
@@ -68,38 +159,69 @@ function addChunk(uploadId, chunkIndex, chunkData) {
     // Update activity timestamp
     upload.lastActivity = Date.now();
 
-    // Store chunk
-    upload.chunks.set(chunkIndex, chunkData);
+    // Update hash with this chunk's data
+    upload.hash.update(chunkData);
     upload.receivedBytes += chunkData.length;
+    upload.receivedChunks++;
 
-    const receivedChunks = upload.chunks.size;
+    logger.info(`[ChunkedUpload] ${uploadId}: Processing chunk ${chunkIndex + 1}/${upload.metadata.totalChunks} (${(chunkData.length / 1024 / 1024).toFixed(2)}MB)`);
+
+    // Split into 8MB Discord chunks and upload immediately
+    let offset = 0;
+    const uploadPromises = [];
+
+    while (offset < chunkData.length) {
+        const end = Math.min(offset + DISCORD_CHUNK_SIZE, chunkData.length);
+        const discordChunk = chunkData.subarray(offset, end);
+        const discordChunkIndex = upload.discordChunkIndex++;
+
+        // Upload to Discord concurrently
+        const uploadPromise = uploadDiscordChunk(
+            upload.channel,
+            discordChunk,
+            upload.metadata.fileId,
+            discordChunkIndex
+        ).then(msgId => {
+            upload.messageIds.push({ index: discordChunkIndex, msgId });
+            logger.debug(`[ChunkedUpload] Discord chunk ${discordChunkIndex} uploaded (${discordChunk.length} bytes)`);
+        });
+
+        uploadPromises.push(uploadPromise);
+        offset = end;
+    }
+
+    // Wait for all Discord uploads from this chunk to complete
+    await Promise.all(uploadPromises);
+
     const totalChunks = upload.metadata.totalChunks;
+    const progress = Math.round((upload.receivedChunks / totalChunks) * 100);
 
-    logger.info(`[ChunkedUpload] ${uploadId}: Received chunk ${chunkIndex + 1}/${totalChunks} (${(chunkData.length / 1024 / 1024).toFixed(2)}MB)`);
+    logger.info(`[ChunkedUpload] ${uploadId}: Chunk ${chunkIndex + 1}/${totalChunks} uploaded to Discord (${upload.messageIds.length} total Discord chunks)`);
 
     return {
         uploadId,
         chunkIndex,
-        receivedChunks,
+        receivedChunks: upload.receivedChunks,
         totalChunks,
-        complete: receivedChunks === totalChunks,
-        progress: Math.round((receivedChunks / totalChunks) * 100)
+        discordChunks: upload.messageIds.length,
+        complete: upload.receivedChunks === totalChunks,
+        progress
     };
 }
 
 /**
- * Check if upload is complete and ready for processing
+ * Check if upload is complete and ready for finalization
  * @param {string} uploadId - Upload session ID
  * @returns {boolean}
  */
 function isUploadComplete(uploadId) {
     const upload = pendingUploads.get(uploadId);
     if (!upload) return false;
-    return upload.chunks.size === upload.metadata.totalChunks;
+    return upload.receivedChunks === upload.metadata.totalChunks;
 }
 
 /**
- * Reassemble chunks and process the complete file
+ * Finalize the upload - create file entry (data already in Discord)
  * @param {string} uploadId - Upload session ID
  * @param {Object} userEnv - User environment
  * @returns {Promise<Object>} Upload result
@@ -112,61 +234,51 @@ async function finalizeUpload(uploadId, userEnv) {
     }
 
     if (!isUploadComplete(uploadId)) {
-        const missing = [];
-        for (let i = 0; i < upload.metadata.totalChunks; i++) {
-            if (!upload.chunks.has(i)) {
-                missing.push(i);
-            }
-        }
-        throw new Error(`Upload incomplete. Missing chunks: ${missing.join(', ')}`);
+        throw new Error(`Upload incomplete. Received ${upload.receivedChunks}/${upload.metadata.totalChunks} chunks`);
     }
 
     logger.info(`[ChunkedUpload] Finalizing ${uploadId}: ${upload.metadata.filename}`);
 
     try {
-        // Reassemble chunks in order
-        const sortedChunks = [];
-        for (let i = 0; i < upload.metadata.totalChunks; i++) {
-            const chunk = upload.chunks.get(i);
-            if (!chunk) {
-                throw new Error(`Missing chunk ${i}`);
-            }
-            sortedChunks.push(chunk);
-        }
+        // Sort message IDs by chunk index to ensure correct order
+        upload.messageIds.sort((a, b) => a.index - b.index);
+        const orderedMessageIds = upload.messageIds.map(m => m.msgId);
 
-        const fileBuffer = Buffer.concat(sortedChunks);
-        logger.info(`[ChunkedUpload] Reassembled ${upload.metadata.filename}: ${(fileBuffer.length / 1024 / 1024).toFixed(2)}MB`);
+        // Finalize hash
+        const fileHash = upload.hash.digest('hex');
 
-        // Verify size matches expected
-        if (fileBuffer.length !== upload.metadata.totalSize) {
-            logger.warn(`[ChunkedUpload] Size mismatch: expected ${upload.metadata.totalSize}, got ${fileBuffer.length}`);
-        }
+        // Create file entry
+        const fileEntry = {
+            id: upload.metadata.fileId,
+            name: upload.metadata.filename,
+            path: upload.metadata.path,
+            size: upload.receivedBytes,
+            hash: fileHash,
+            channelId: upload.metadata.channelId,
+            messageIds: orderedMessageIds,
+            status: "FINISHED",
+            addedAt: new Date().toISOString()
+        };
 
-        // Process the file using existing upload service
-        const result = await processFileUpload(
-            upload.metadata.username,
-            userEnv,
-            fileBuffer,
-            upload.metadata.filename,
-            upload.metadata.path
-        );
-
-        // Save user state
+        userEnv.state.files.push(fileEntry);
         await saveUserEnv(upload.metadata.username);
 
         // Cleanup
         pendingUploads.delete(uploadId);
 
-        logger.info(`[ChunkedUpload] Complete: ${upload.metadata.filename} -> ${upload.metadata.path}`);
+        logger.info(`[ChunkedUpload] Complete: ${upload.metadata.filename} -> ${upload.metadata.path} (${orderedMessageIds.length} Discord chunks)`);
 
         return {
             success: true,
-            ...result,
-            chunkedUpload: true
+            name: upload.metadata.filename,
+            path: upload.metadata.path,
+            size: upload.receivedBytes,
+            chunks: orderedMessageIds.length,
+            chunkedUpload: true,
+            entry: fileEntry
         };
 
     } catch (error) {
-        // Cleanup on error
         pendingUploads.delete(uploadId);
         logger.error(`[ChunkedUpload] Failed to finalize ${uploadId}:`, error);
         throw error;
@@ -181,6 +293,7 @@ function cancelUpload(uploadId) {
     if (pendingUploads.has(uploadId)) {
         const upload = pendingUploads.get(uploadId);
         logger.info(`[ChunkedUpload] Cancelled: ${uploadId} (${upload.metadata.filename})`);
+        // Note: Already uploaded Discord chunks remain (cleanup would require deletion)
         pendingUploads.delete(uploadId);
         return true;
     }
@@ -201,11 +314,12 @@ function getUploadStatus(uploadId) {
         filename: upload.metadata.filename,
         path: upload.metadata.path,
         totalChunks: upload.metadata.totalChunks,
-        receivedChunks: upload.chunks.size,
+        receivedChunks: upload.receivedChunks,
         receivedBytes: upload.receivedBytes,
         totalSize: upload.metadata.totalSize,
-        progress: Math.round((upload.chunks.size / upload.metadata.totalChunks) * 100),
-        complete: upload.chunks.size === upload.metadata.totalChunks,
+        discordChunks: upload.messageIds.length,
+        progress: Math.round((upload.receivedChunks / upload.metadata.totalChunks) * 100),
+        complete: upload.receivedChunks === upload.metadata.totalChunks,
         lastActivity: upload.lastActivity
     };
 }
