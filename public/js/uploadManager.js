@@ -1,6 +1,7 @@
 /**
  * Upload Manager Module
  * Handles file uploads with retry logic and progress tracking
+ * Supports multiple concurrent upload sessions (e.g., uploading multiple folders back-to-back)
  */
 
 const UploadManager = {
@@ -17,6 +18,63 @@ const UploadManager = {
      */
     init() {
         this.attachEventListeners();
+    },
+
+    /**
+     * Generate unique session ID
+     */
+    generateSessionId() {
+        return `session-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+    },
+
+    /**
+     * Get or create a session
+     */
+    getSession(sessionId) {
+        return AppState.uploads.sessions.get(sessionId);
+    },
+
+    /**
+     * Create a new upload session
+     */
+    createSession() {
+        const sessionId = this.generateSessionId();
+        const session = {
+            id: sessionId,
+            files: new Map(),
+            cancelled: false,
+            startTime: Date.now(),
+            totalBytesUploaded: 0,
+            completed: 0,
+            failed: 0,
+            total: 0
+        };
+        AppState.uploads.sessions.set(sessionId, session);
+        return session;
+    },
+
+    /**
+     * Remove completed/cancelled session after delay
+     */
+    scheduleSessionCleanup(sessionId, delay = 10000) {
+        setTimeout(() => {
+            const session = this.getSession(sessionId);
+            if (session) {
+                // Only remove if all files are done (completed, failed, or cancelled)
+                const allDone = Array.from(session.files.values()).every(
+                    f => ['complete', 'failed', 'cancelled'].includes(f.status)
+                );
+                if (allDone) {
+                    AppState.uploads.sessions.delete(sessionId);
+                    if (AppState.uploads.activeSessionId === sessionId) {
+                        // Switch to another active session if available
+                        const remaining = Array.from(AppState.uploads.sessions.keys());
+                        AppState.uploads.activeSessionId = remaining.length > 0 ? remaining[0] : null;
+                    }
+                    this.updateUI();
+                }
+            }
+        }, delay);
     },
 
     /**
@@ -90,7 +148,7 @@ const UploadManager = {
     },
 
     /**
-     * Start upload process
+     * Start upload process - creates a new session for this batch
      */
     async startUpload(files) {
         if (files.length === 0) return;
@@ -98,21 +156,20 @@ const UploadManager = {
         // Check for large files and show warning
         this.checkLargeFiles(files);
 
-        // Reset upload state
-        AppState.uploads.active.clear();
-        AppState.uploads.cancelled = false;
-        AppState.uploads.startTime = Date.now();
-        AppState.uploads.totalBytesUploaded = 0;
+        // Create a new session for this upload batch
+        const session = this.createSession();
+        AppState.uploads.activeSessionId = session.id;
 
         // Show upload panel
         this.showUploadPanel();
 
         // Prepare upload queue
-        const uploadQueue = this.prepareUploadQueue(files);
+        const uploadQueue = this.prepareUploadQueue(files, session.id);
+        session.total = uploadQueue.length;
 
-        // Initialize upload tracking
+        // Initialize upload tracking for this session
         uploadQueue.forEach(item => {
-            AppState.uploads.active.set(item.id, {
+            session.files.set(item.id, {
                 id: item.id,
                 name: item.file.name,
                 size: item.file.size,
@@ -125,21 +182,18 @@ const UploadManager = {
         this.updateUI();
 
         // Process uploads in parallel batches
-        let completed = 0;
-        let failed = 0;
-
         for (let i = 0; i < uploadQueue.length; i += this.MAX_PARALLEL_UPLOADS) {
-            if (AppState.uploads.cancelled) break;
+            if (session.cancelled) break;
 
             const batch = uploadQueue.slice(i, i + this.MAX_PARALLEL_UPLOADS);
 
             const batchPromises = batch.map(async (item) => {
                 try {
-                    const result = await this.uploadFileWithRetry(item);
-                    completed++;
+                    await this.uploadFileWithRetry(item, session);
+                    session.completed++;
                     return { success: true };
                 } catch (error) {
-                    failed++;
+                    session.failed++;
                     return { success: false, error };
                 }
             });
@@ -147,32 +201,30 @@ const UploadManager = {
             await Promise.all(batchPromises);
         }
 
-        // Hide cancel button
-        document.getElementById('cancelUploadBtn').style.display = 'none';
-
-        // Show completion message
-        if (AppState.uploads.cancelled) {
-            UI.showNotification('Upload cancelled', 'info');
+        // Show completion message for this session
+        if (session.cancelled) {
+            UI.showNotification(`Upload session cancelled`, 'info');
         } else {
-            const message = `Upload complete: ${completed} uploaded${failed > 0 ? `, ${failed} failed` : ''}`;
-            UI.showNotification(message, failed > 0 ? 'error' : 'success');
+            const message = `Upload complete: ${session.completed} uploaded${session.failed > 0 ? `, ${session.failed} failed` : ''}`;
+            UI.showNotification(message, session.failed > 0 ? 'error' : 'success');
         }
 
         // Reload files
         setTimeout(() => {
             FileManager.loadFiles();
-
-            // Hide upload panel after a delay
-            setTimeout(() => {
-                this.hideUploadPanel();
-            }, 2000);
         }, 500);
+
+        // Schedule session cleanup
+        this.scheduleSessionCleanup(session.id, 5000);
+
+        // Update UI to show completion state
+        this.updateUI();
     },
 
     /**
      * Prepare upload queue with paths
      */
-    prepareUploadQueue(files) {
+    prepareUploadQueue(files, sessionId) {
         return files.map((file, i) => {
             const id = this.generateFileId();
             let targetPath;
@@ -191,6 +243,7 @@ const UploadManager = {
                 id,
                 file,
                 path: targetPath,
+                sessionId,
                 batchIndex: i + 1,
                 batchTotal: files.length
             };
@@ -200,10 +253,10 @@ const UploadManager = {
     /**
      * Upload single file with retry
      */
-    async uploadFileWithRetry(item, retryCount = 0) {
-        const upload = AppState.uploads.active.get(item.id);
+    async uploadFileWithRetry(item, session, retryCount = 0) {
+        const upload = session.files.get(item.id);
 
-        if (AppState.uploads.cancelled) {
+        if (session.cancelled) {
             upload.status = 'cancelled';
             upload.progress = 0;
             this.updateUI();
@@ -249,22 +302,14 @@ const UploadManager = {
             }
 
             // Update progress
-            AppState.uploads.totalBytesUploaded += item.file.size;
+            session.totalBytesUploaded += item.file.size;
             upload.status = 'complete';
             upload.progress = 100;
             this.updateUI();
 
-            // Auto-remove after 10 seconds
-            setTimeout(() => {
-                if (AppState.uploads.active.has(item.id)) {
-                    AppState.uploads.active.delete(item.id);
-                    this.updateUI();
-                }
-            }, 10000);
-
             return result;
         } catch (error) {
-            if (AppState.uploads.cancelled) {
+            if (session.cancelled) {
                 upload.status = 'cancelled';
                 upload.progress = 0;
                 this.updateUI();
@@ -276,34 +321,58 @@ const UploadManager = {
                 console.warn(`Retrying ${item.file.name} in ${delay}ms (attempt ${retryCount + 1}/${this.MAX_RETRIES})`);
 
                 await this.sleep(delay);
-                return this.uploadFileWithRetry(item, retryCount + 1);
+                return this.uploadFileWithRetry(item, session, retryCount + 1);
             }
 
             // Failed after retries
             upload.status = 'failed';
             upload.progress = 0;
             // Store the failed upload item for potential manual retry
-            this.failedUploads.set(item.id, item);
+            this.failedUploads.set(item.id, { item, sessionId: session.id });
             this.updateUI();
             throw error;
         }
     },
 
     /**
-     * Cancel ongoing upload
+     * Cancel a specific session or the active session
      */
-    cancelUpload() {
-        AppState.uploads.cancelled = true;
-        UI.showNotification('Cancelling uploads...', 'info');
+    cancelUpload(sessionId = null) {
+        const targetId = sessionId || AppState.uploads.activeSessionId;
+        if (!targetId) return;
+
+        const session = this.getSession(targetId);
+        if (session) {
+            session.cancelled = true;
+            UI.showNotification('Cancelling upload session...', 'info');
+        }
+    },
+
+    /**
+     * Cancel all active upload sessions
+     */
+    cancelAllUploads() {
+        for (const session of AppState.uploads.sessions.values()) {
+            session.cancelled = true;
+        }
+        UI.showNotification('Cancelling all uploads...', 'info');
     },
 
     /**
      * Retry a failed upload
      */
     async retryUpload(uploadId) {
-        const item = this.failedUploads.get(uploadId);
-        if (!item) {
+        const failedData = this.failedUploads.get(uploadId);
+        if (!failedData) {
             UI.showNotification('Upload item not found for retry', 'error');
+            return;
+        }
+
+        const { item, sessionId } = failedData;
+        const session = this.getSession(sessionId);
+
+        if (!session) {
+            UI.showNotification('Upload session expired', 'error');
             return;
         }
 
@@ -311,21 +380,20 @@ const UploadManager = {
         this.failedUploads.delete(uploadId);
 
         // Reset upload state for this item
-        const upload = AppState.uploads.active.get(uploadId);
+        const upload = session.files.get(uploadId);
         if (upload) {
             upload.status = 'pending';
             upload.progress = 0;
             this.updateUI();
         }
 
-        // Reset cancelled flag if it was set
-        AppState.uploads.cancelled = false;
-
-        // Show cancel button again
-        document.getElementById('cancelUploadBtn').style.display = 'block';
+        // Reset cancelled flag for this session
+        session.cancelled = false;
 
         try {
-            await this.uploadFileWithRetry(item);
+            await this.uploadFileWithRetry(item, session);
+            session.completed++;
+            session.failed--;
             UI.showNotification(`Successfully uploaded ${item.file.name}`, 'success');
 
             // Reload files
@@ -336,8 +404,7 @@ const UploadManager = {
             UI.showNotification(`Failed to upload ${item.file.name}`, 'error');
         }
 
-        // Hide cancel button after retry completes
-        document.getElementById('cancelUploadBtn').style.display = 'none';
+        this.updateUI();
     },
 
     /**
@@ -352,36 +419,72 @@ const UploadManager = {
      * Hide upload panel
      */
     hideUploadPanel() {
-        document.getElementById('uploadPanel').classList.add('hidden');
+        // Only hide if no active sessions
+        if (AppState.uploads.sessions.size === 0) {
+            document.getElementById('uploadPanel').classList.add('hidden');
+        }
     },
 
     /**
-     * Update upload UI
+     * Update upload UI - shows all sessions combined
      */
     updateUI() {
-        const uploads = Array.from(AppState.uploads.active.values());
-        const total = uploads.length;
-        const completed = uploads.filter(u => u.status === 'complete').length;
-        const failed = uploads.filter(u => u.status === 'failed').length;
+        // Combine all uploads from all sessions
+        const allUploads = [];
+        let totalCompleted = 0;
+        let totalFailed = 0;
+        let totalFiles = 0;
+        let totalBytesUploaded = 0;
+        let earliestStartTime = Date.now();
+        let hasActiveSession = false;
 
-        // Update title
+        for (const session of AppState.uploads.sessions.values()) {
+            for (const upload of session.files.values()) {
+                allUploads.push({ ...upload, sessionId: session.id });
+            }
+            totalCompleted += session.completed;
+            totalFailed += session.failed;
+            totalFiles += session.total;
+            totalBytesUploaded += session.totalBytesUploaded;
+            if (session.startTime < earliestStartTime) {
+                earliestStartTime = session.startTime;
+            }
+            // Check if session is still active (has pending/uploading files)
+            const hasActive = Array.from(session.files.values()).some(
+                f => ['pending', 'uploading', 'retrying'].includes(f.status)
+            );
+            if (hasActive) hasActiveSession = true;
+        }
+
+        // Hide panel if no sessions
+        if (AppState.uploads.sessions.size === 0) {
+            this.hideUploadPanel();
+            return;
+        }
+
+        // Show/hide cancel button based on active uploads
+        document.getElementById('cancelUploadBtn').style.display = hasActiveSession ? 'block' : 'none';
+
+        // Update title with session count
+        const sessionCount = AppState.uploads.sessions.size;
+        const sessionText = sessionCount > 1 ? ` (${sessionCount} sessions)` : '';
         document.getElementById('uploadPanelTitle').textContent =
-            `Uploading... (${completed}/${total})`;
+            `Uploading... (${totalCompleted}/${totalFiles})${sessionText}`;
 
         // Update overall progress
-        const overallProgress = total > 0 ? (completed / total) * 100 : 0;
+        const overallProgress = totalFiles > 0 ? (totalCompleted / totalFiles) * 100 : 0;
         document.getElementById('overallProgressFill').style.width = overallProgress + '%';
 
         // Update stats
-        const elapsed = (Date.now() - AppState.uploads.startTime) / 1000;
-        const speed = elapsed > 0 ? AppState.uploads.totalBytesUploaded / elapsed : 0;
+        const elapsed = (Date.now() - earliestStartTime) / 1000;
+        const speed = elapsed > 0 ? totalBytesUploaded / elapsed : 0;
         document.getElementById('uploadStatsText').textContent =
-            `${completed} / ${total} files${failed > 0 ? ` (${failed} failed)` : ''}`;
+            `${totalCompleted} / ${totalFiles} files${totalFailed > 0 ? ` (${totalFailed} failed)` : ''}`;
         document.getElementById('uploadSpeedText').textContent =
             speed > 0 ? UI.formatSpeed(speed) : '-- MB/s';
 
         // Update upload list
-        this.renderUploadList(uploads);
+        this.renderUploadList(allUploads);
     },
 
     /**

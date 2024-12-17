@@ -27,12 +27,10 @@ const AppState = {
         order: 1 // 1 = ascending, -1 = descending
     },
 
-    // Upload tracking
+    // Upload tracking - supports multiple concurrent sessions
     uploads: {
-        active: new Map(),
-        cancelled: false,
-        startTime: null,
-        totalBytesUploaded: 0
+        sessions: new Map(),  // sessionId -> { files: Map, cancelled, startTime, totalBytesUploaded }
+        activeSessionId: null // Currently displayed session
     },
 
     // UI state
