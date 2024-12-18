@@ -302,11 +302,85 @@ const FileViewer = {
         // --- VIDEO ---
         else if (['mp4', 'webm', 'mov', 'mkv'].includes(ext)) {
             content.innerHTML = `
-                <video controls autoplay class="viewer-video">
-                    <source src="${url}" type="video/${ext === 'mov' ? 'quicktime' : ext}">
-                    Your browser does not support the video tag.
-                </video>
+                <div class="viewer-video-wrapper">
+                    <video id="viewerVideo" class="viewer-video">
+                        <source src="${url}" type="video/${ext === 'mov' ? 'quicktime' : ext}">
+                        Your browser does not support the video tag.
+                    </video>
+                    <div class="video-controls">
+                        <div class="video-progress-container" id="videoProgressContainer">
+                            <div class="video-progress-bar" id="videoProgressBar"></div>
+                            <div class="video-progress-buffered" id="videoBuffered"></div>
+                            <div class="video-progress-played" id="videoPlayed"></div>
+                            <div class="video-progress-thumb" id="videoThumb"></div>
+                        </div>
+                        <div class="video-controls-row">
+                            <div class="video-controls-left">
+                                <button id="videoPlayBtn" class="video-btn" title="Play/Pause (Space)">
+                                    <i class="fas fa-play"></i>
+                                </button>
+                                <button id="videoMuteBtn" class="video-btn" title="Mute/Unmute (M)">
+                                    <i class="fas fa-volume-up"></i>
+                                </button>
+                                <input type="range" id="videoVolume" class="video-volume" min="0" max="1" step="0.1" value="1">
+                                <span class="video-time">
+                                    <span id="videoCurrentTime">0:00</span> / <span id="videoDuration">0:00</span>
+                                </span>
+                            </div>
+                            <div class="video-controls-right">
+                                <div class="video-speed-control">
+                                    <button id="videoSpeedBtn" class="video-btn video-speed-btn" title="Playback Speed">
+                                        <span id="videoSpeedLabel">1x</span>
+                                    </button>
+                                    <div class="video-speed-menu" id="videoSpeedMenu">
+                                        <div class="speed-preset" data-speed="0.25">0.25x</div>
+                                        <div class="speed-preset" data-speed="0.5">0.5x</div>
+                                        <div class="speed-preset" data-speed="0.75">0.75x</div>
+                                        <div class="speed-preset active" data-speed="1">1x</div>
+                                        <div class="speed-preset" data-speed="1.25">1.25x</div>
+                                        <div class="speed-preset" data-speed="1.5">1.5x</div>
+                                        <div class="speed-preset" data-speed="1.75">1.75x</div>
+                                        <div class="speed-preset" data-speed="2">2x</div>
+                                        <div class="speed-preset" data-speed="2.5">2.5x</div>
+                                        <div class="speed-preset" data-speed="3">3x</div>
+                                        <div class="speed-custom">
+                                            <label>Custom:</label>
+                                            <input type="number" id="videoCustomSpeed" min="0.1" max="16" step="0.1" value="1" placeholder="1.0">
+                                            <button id="videoCustomSpeedBtn">Set</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="video-jump-control">
+                                    <button id="videoJumpBtn" class="video-btn" title="Jump to timestamp (J)">
+                                        <i class="fas fa-step-forward"></i>
+                                    </button>
+                                    <div class="video-jump-menu" id="videoJumpMenu">
+                                        <label>Jump to:</label>
+                                        <div class="jump-inputs">
+                                            <input type="number" id="jumpHours" min="0" max="99" value="0" placeholder="HH">
+                                            <span>:</span>
+                                            <input type="number" id="jumpMinutes" min="0" max="59" value="0" placeholder="MM">
+                                            <span>:</span>
+                                            <input type="number" id="jumpSeconds" min="0" max="59" value="0" placeholder="SS">
+                                        </div>
+                                        <button id="videoJumpGoBtn">Go</button>
+                                    </div>
+                                </div>
+                                <button id="videoSkipBack" class="video-btn" title="Skip back 10s (←)">
+                                    <i class="fas fa-undo"></i> 10
+                                </button>
+                                <button id="videoSkipForward" class="video-btn" title="Skip forward 10s (→)">
+                                    10 <i class="fas fa-redo"></i>
+                                </button>
+                                <button id="videoFullscreenBtn" class="video-btn" title="Fullscreen (F)">
+                                    <i class="fas fa-expand"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             `;
+            this.setupVideoControls();
         }
 
         // --- AUDIO ---
@@ -409,6 +483,307 @@ const FileViewer = {
     },
 
     /**
+     * Setup custom video controls
+     */
+    setupVideoControls() {
+        const video = document.getElementById('viewerVideo');
+        if (!video) return;
+
+        const playBtn = document.getElementById('videoPlayBtn');
+        const muteBtn = document.getElementById('videoMuteBtn');
+        const volumeSlider = document.getElementById('videoVolume');
+        const currentTimeEl = document.getElementById('videoCurrentTime');
+        const durationEl = document.getElementById('videoDuration');
+        const progressContainer = document.getElementById('videoProgressContainer');
+        const progressPlayed = document.getElementById('videoPlayed');
+        const progressBuffered = document.getElementById('videoBuffered');
+        const progressThumb = document.getElementById('videoThumb');
+        const speedBtn = document.getElementById('videoSpeedBtn');
+        const speedMenu = document.getElementById('videoSpeedMenu');
+        const speedLabel = document.getElementById('videoSpeedLabel');
+        const customSpeedInput = document.getElementById('videoCustomSpeed');
+        const customSpeedBtn = document.getElementById('videoCustomSpeedBtn');
+        const jumpBtn = document.getElementById('videoJumpBtn');
+        const jumpMenu = document.getElementById('videoJumpMenu');
+        const jumpGoBtn = document.getElementById('videoJumpGoBtn');
+        const skipBack = document.getElementById('videoSkipBack');
+        const skipForward = document.getElementById('videoSkipForward');
+        const fullscreenBtn = document.getElementById('videoFullscreenBtn');
+
+        // Format time helper
+        const formatTime = (seconds) => {
+            if (isNaN(seconds) || !isFinite(seconds)) return '0:00';
+            const h = Math.floor(seconds / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            const s = Math.floor(seconds % 60);
+            if (h > 0) {
+                return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+            }
+            return `${m}:${s.toString().padStart(2, '0')}`;
+        };
+
+        // Update progress bar
+        const updateProgress = () => {
+            const percent = (video.currentTime / video.duration) * 100;
+            progressPlayed.style.width = `${percent}%`;
+            progressThumb.style.left = `${percent}%`;
+            currentTimeEl.textContent = formatTime(video.currentTime);
+        };
+
+        // Update buffered progress
+        const updateBuffered = () => {
+            if (video.buffered.length > 0) {
+                const bufferedEnd = video.buffered.end(video.buffered.length - 1);
+                const percent = (bufferedEnd / video.duration) * 100;
+                progressBuffered.style.width = `${percent}%`;
+            }
+        };
+
+        // Play/Pause
+        playBtn.onclick = () => {
+            if (video.paused) {
+                video.play();
+            } else {
+                video.pause();
+            }
+        };
+
+        video.onclick = () => {
+            if (video.paused) {
+                video.play();
+            } else {
+                video.pause();
+            }
+        };
+
+        video.onplay = () => {
+            playBtn.innerHTML = '<i class="fas fa-pause"></i>';
+        };
+
+        video.onpause = () => {
+            playBtn.innerHTML = '<i class="fas fa-play"></i>';
+        };
+
+        // Time updates
+        video.ontimeupdate = updateProgress;
+        video.onprogress = updateBuffered;
+
+        video.onloadedmetadata = () => {
+            durationEl.textContent = formatTime(video.duration);
+            video.play(); // Autoplay
+        };
+
+        // Volume
+        muteBtn.onclick = () => {
+            video.muted = !video.muted;
+            muteBtn.innerHTML = video.muted ? '<i class="fas fa-volume-mute"></i>' : '<i class="fas fa-volume-up"></i>';
+        };
+
+        volumeSlider.oninput = () => {
+            video.volume = volumeSlider.value;
+            video.muted = video.volume === 0;
+            muteBtn.innerHTML = video.muted ? '<i class="fas fa-volume-mute"></i>' : '<i class="fas fa-volume-up"></i>';
+        };
+
+        // Progress bar seeking
+        let isSeeking = false;
+
+        const seekTo = (e) => {
+            const rect = progressContainer.getBoundingClientRect();
+            const percent = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+            video.currentTime = percent * video.duration;
+        };
+
+        progressContainer.onmousedown = (e) => {
+            isSeeking = true;
+            seekTo(e);
+        };
+
+        document.addEventListener('mousemove', (e) => {
+            if (isSeeking) {
+                seekTo(e);
+            }
+        });
+
+        document.addEventListener('mouseup', () => {
+            isSeeking = false;
+        });
+
+        // Speed control
+        const setSpeed = (speed) => {
+            speed = Math.max(0.1, Math.min(16, parseFloat(speed)));
+            video.playbackRate = speed;
+            speedLabel.textContent = `${speed}x`;
+            customSpeedInput.value = speed;
+
+            // Update active preset
+            document.querySelectorAll('.speed-preset').forEach(el => {
+                el.classList.toggle('active', parseFloat(el.dataset.speed) === speed);
+            });
+        };
+
+        speedBtn.onclick = (e) => {
+            e.stopPropagation();
+            speedMenu.classList.toggle('show');
+            jumpMenu.classList.remove('show');
+        };
+
+        document.querySelectorAll('.speed-preset').forEach(el => {
+            el.onclick = () => {
+                setSpeed(el.dataset.speed);
+                speedMenu.classList.remove('show');
+            };
+        });
+
+        customSpeedBtn.onclick = () => {
+            setSpeed(customSpeedInput.value);
+            speedMenu.classList.remove('show');
+        };
+
+        customSpeedInput.onkeydown = (e) => {
+            if (e.key === 'Enter') {
+                setSpeed(customSpeedInput.value);
+                speedMenu.classList.remove('show');
+            }
+        };
+
+        // Jump to timestamp
+        jumpBtn.onclick = (e) => {
+            e.stopPropagation();
+            jumpMenu.classList.toggle('show');
+            speedMenu.classList.remove('show');
+
+            // Pre-fill with current time
+            const currentTime = video.currentTime;
+            document.getElementById('jumpHours').value = Math.floor(currentTime / 3600);
+            document.getElementById('jumpMinutes').value = Math.floor((currentTime % 3600) / 60);
+            document.getElementById('jumpSeconds').value = Math.floor(currentTime % 60);
+        };
+
+        jumpGoBtn.onclick = () => {
+            const hours = parseInt(document.getElementById('jumpHours').value) || 0;
+            const minutes = parseInt(document.getElementById('jumpMinutes').value) || 0;
+            const seconds = parseInt(document.getElementById('jumpSeconds').value) || 0;
+            const targetTime = hours * 3600 + minutes * 60 + seconds;
+
+            if (targetTime >= 0 && targetTime <= video.duration) {
+                video.currentTime = targetTime;
+            }
+            jumpMenu.classList.remove('show');
+        };
+
+        // Skip buttons
+        skipBack.onclick = () => {
+            video.currentTime = Math.max(0, video.currentTime - 10);
+        };
+
+        skipForward.onclick = () => {
+            video.currentTime = Math.min(video.duration, video.currentTime + 10);
+        };
+
+        // Fullscreen
+        fullscreenBtn.onclick = () => {
+            const wrapper = document.querySelector('.viewer-video-wrapper');
+            if (document.fullscreenElement) {
+                document.exitFullscreen();
+            } else if (wrapper.requestFullscreen) {
+                wrapper.requestFullscreen();
+            } else if (wrapper.webkitRequestFullscreen) {
+                wrapper.webkitRequestFullscreen();
+            }
+        };
+
+        document.onfullscreenchange = () => {
+            fullscreenBtn.innerHTML = document.fullscreenElement ?
+                '<i class="fas fa-compress"></i>' : '<i class="fas fa-expand"></i>';
+        };
+
+        // Close menus when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!speedBtn.contains(e.target) && !speedMenu.contains(e.target)) {
+                speedMenu.classList.remove('show');
+            }
+            if (!jumpBtn.contains(e.target) && !jumpMenu.contains(e.target)) {
+                jumpMenu.classList.remove('show');
+            }
+        });
+
+        // Store keyboard handler for video
+        this._videoKeyHandler = (e) => {
+            if (!this.isOpen()) return;
+            const video = document.getElementById('viewerVideo');
+            if (!video) return;
+
+            // Don't handle if typing in an input
+            if (e.target.tagName === 'INPUT') return;
+
+            switch (e.key.toLowerCase()) {
+                case ' ':
+                    e.preventDefault();
+                    if (video.paused) video.play();
+                    else video.pause();
+                    break;
+                case 'm':
+                    video.muted = !video.muted;
+                    muteBtn.innerHTML = video.muted ? '<i class="fas fa-volume-mute"></i>' : '<i class="fas fa-volume-up"></i>';
+                    break;
+                case 'f':
+                    fullscreenBtn.click();
+                    break;
+                case 'j':
+                    jumpBtn.click();
+                    break;
+                case 'arrowleft':
+                    if (!e.target.closest('.video-jump-menu')) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        video.currentTime = Math.max(0, video.currentTime - 10);
+                    }
+                    break;
+                case 'arrowright':
+                    if (!e.target.closest('.video-jump-menu')) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        video.currentTime = Math.min(video.duration, video.currentTime + 10);
+                    }
+                    break;
+                case 'arrowup':
+                    e.preventDefault();
+                    video.volume = Math.min(1, video.volume + 0.1);
+                    volumeSlider.value = video.volume;
+                    break;
+                case 'arrowdown':
+                    e.preventDefault();
+                    video.volume = Math.max(0, video.volume - 0.1);
+                    volumeSlider.value = video.volume;
+                    break;
+                case ',':
+                    // Frame back (when paused)
+                    if (video.paused) {
+                        video.currentTime = Math.max(0, video.currentTime - (1 / 30));
+                    }
+                    break;
+                case '.':
+                    // Frame forward (when paused)
+                    if (video.paused) {
+                        video.currentTime = Math.min(video.duration, video.currentTime + (1 / 30));
+                    }
+                    break;
+                case '[':
+                    // Decrease speed
+                    setSpeed(Math.max(0.1, video.playbackRate - 0.25));
+                    break;
+                case ']':
+                    // Increase speed
+                    setSpeed(Math.min(16, video.playbackRate + 0.25));
+                    break;
+            }
+        };
+
+        document.addEventListener('keydown', this._videoKeyHandler);
+    },
+
+    /**
      * Close the viewer
      */
     close() {
@@ -424,6 +799,12 @@ const FileViewer = {
             const audio = modal.querySelector('audio');
             if (video) video.pause();
             if (audio) audio.pause();
+
+            // Cleanup video keyboard handler
+            if (this._videoKeyHandler) {
+                document.removeEventListener('keydown', this._videoKeyHandler);
+                this._videoKeyHandler = null;
+            }
         }
     },
 
