@@ -6,12 +6,16 @@
 const FileViewer = {
     // Cache for pre-fetched file blobs
     cache: new Map(),
+    // Track pending fetches to avoid duplicates
+    pendingFetches: new Map(),
     // Current file being viewed
     currentFile: null,
     // List of viewable files in current directory
     viewableFiles: [],
     // Current index in viewable files
     currentIndex: -1,
+    // Priority file ID (currently being viewed)
+    priorityFileId: null,
 
     /**
      * Initialize the viewer
@@ -131,40 +135,131 @@ const FileViewer = {
         const currentIds = new Set(viewable.map(f => f.id));
         for (const [id] of this.cache) {
             if (!currentIds.has(id)) {
+                // Revoke old blob URLs
+                const cached = this.cache.get(id);
+                if (cached && cached.url) {
+                    URL.revokeObjectURL(cached.url);
+                }
                 this.cache.delete(id);
             }
         }
 
-        // Pre-fetch files (under 50MB) for instant viewing
-        viewable.forEach(file => {
-            if (!this.cache.has(file.id) && file.size < 50 * 1024 * 1024) {
-                this.prefetchFile(file);
+        // Cancel pending fetches for files no longer in directory
+        for (const [id, controller] of this.pendingFetches) {
+            if (!currentIds.has(id)) {
+                controller.abort();
+                this.pendingFetches.delete(id);
             }
-        });
+        }
 
         // Store viewable files list for navigation
         this.viewableFiles = viewable;
+
+        // Pre-fetch files (under 50MB) for instant viewing
+        // Process in batches to avoid overwhelming the connection
+        this.prefetchBatch(viewable.filter(f =>
+            !this.cache.has(f.id) &&
+            !this.pendingFetches.has(f.id) &&
+            f.size < 50 * 1024 * 1024
+        ));
     },
 
     /**
-     * Pre-fetch a single file
+     * Prefetch files in batches with priority support
+     */
+    async prefetchBatch(files, batchSize = 3) {
+        for (let i = 0; i < files.length; i += batchSize) {
+            // Sort batch to put priority file first
+            const batch = files.slice(i, i + batchSize).sort((a, b) => {
+                if (a.id === this.priorityFileId) return -1;
+                if (b.id === this.priorityFileId) return 1;
+                return 0;
+            });
+
+            await Promise.all(batch.map(file => this.prefetchFile(file)));
+        }
+    },
+
+    /**
+     * Pre-fetch a single file with conversion support
      */
     async prefetchFile(file) {
+        // Skip if already cached or being fetched
+        if (this.cache.has(file.id) || this.pendingFetches.has(file.id)) {
+            return;
+        }
+
+        const controller = new AbortController();
+        this.pendingFetches.set(file.id, controller);
+
         try {
             const url = API.getDownloadURL(file.id, true);
-            const response = await fetch(url);
-            if (response.ok) {
-                const blob = await response.blob();
-                this.cache.set(file.id, {
-                    blob,
-                    url: URL.createObjectURL(blob),
-                    timestamp: Date.now()
-                });
+            const response = await fetch(url, { signal: controller.signal });
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
             }
+
+            let blob = await response.blob();
+            const ext = file.name.split('.').pop().toLowerCase();
+
+            // Pre-convert HEIC images
+            if (['heic', 'heif'].includes(ext) && window.heic2any) {
+                try {
+                    console.debug(`[FileViewer] Pre-converting HEIC: ${file.name}`);
+                    const converted = await heic2any({
+                        blob,
+                        toType: "image/jpeg",
+                        quality: 0.9
+                    });
+                    blob = Array.isArray(converted) ? converted[0] : converted;
+                } catch (err) {
+                    console.warn(`[FileViewer] HEIC pre-conversion failed for ${file.name}:`, err.message);
+                    // Keep original blob, will try again on view
+                }
+            }
+
+            // Store in cache
+            this.cache.set(file.id, {
+                blob,
+                url: URL.createObjectURL(blob),
+                timestamp: Date.now(),
+                converted: ['heic', 'heif'].includes(ext) // Mark if conversion was done
+            });
+
+            console.debug(`[FileViewer] Prefetched: ${file.name}`);
         } catch (error) {
-            // Silently fail - file will be fetched on demand
-            console.debug(`[FileViewer] Prefetch failed for ${file.name}:`, error.message);
+            if (error.name !== 'AbortError') {
+                console.debug(`[FileViewer] Prefetch failed for ${file.name}:`, error.message);
+            }
+        } finally {
+            this.pendingFetches.delete(file.id);
         }
+    },
+
+    /**
+     * Prioritize fetching a specific file (currently being viewed)
+     */
+    async prioritizeFetch(file) {
+        this.priorityFileId = file.id;
+
+        // If already cached, return immediately
+        if (this.cache.has(file.id)) {
+            return this.cache.get(file.id);
+        }
+
+        // If already being fetched, wait for it
+        if (this.pendingFetches.has(file.id)) {
+            // Wait for the pending fetch to complete
+            while (this.pendingFetches.has(file.id)) {
+                await new Promise(r => setTimeout(r, 50));
+            }
+            return this.cache.get(file.id);
+        }
+
+        // Fetch with high priority
+        await this.prefetchFile(file);
+        return this.cache.get(file.id);
     },
 
     /**
@@ -200,6 +295,9 @@ const FileViewer = {
             return;
         }
 
+        // Set priority for this file
+        this.priorityFileId = file.id;
+
         // Store current file
         this.currentFile = file;
 
@@ -220,6 +318,24 @@ const FileViewer = {
         // Show modal
         modal.style.display = 'flex';
         document.body.style.overflow = 'hidden';
+
+        // Prefetch adjacent files for smooth navigation
+        this.prefetchAdjacent();
+    },
+
+    /**
+     * Prefetch next and previous files for smooth gallery navigation
+     */
+    prefetchAdjacent() {
+        const prevFile = this.viewableFiles[this.currentIndex - 1];
+        const nextFile = this.viewableFiles[this.currentIndex + 1];
+
+        if (nextFile && !this.cache.has(nextFile.id) && nextFile.size < 50 * 1024 * 1024) {
+            this.prefetchFile(nextFile);
+        }
+        if (prevFile && !this.cache.has(prevFile.id) && prevFile.size < 50 * 1024 * 1024) {
+            this.prefetchFile(prevFile);
+        }
     },
 
     /**
@@ -942,6 +1058,16 @@ const FileViewer = {
         const content = document.getElementById('viewerContent');
 
         try {
+            // Check if already pre-converted in cache
+            const cached = this.cache.get(file.id);
+            if (cached && cached.converted) {
+                // Use pre-converted blob directly
+                content.innerHTML = `<img id="viewerImage" src="${cached.url}" class="viewer-image" alt="HEIC Image">`;
+                const img = document.getElementById('viewerImage');
+                img.onload = () => this.setupImageZoom();
+                return;
+            }
+
             if (!window.heic2any) {
                 throw new Error('HEIC library not loaded');
             }
@@ -961,6 +1087,14 @@ const FileViewer = {
 
             const jpgBlob = Array.isArray(conversionResult) ? conversionResult[0] : conversionResult;
             const imgUrl = URL.createObjectURL(jpgBlob);
+
+            // Update cache with converted blob
+            this.cache.set(file.id, {
+                blob: jpgBlob,
+                url: imgUrl,
+                timestamp: Date.now(),
+                converted: true
+            });
 
             content.innerHTML = `<img id="viewerImage" src="${imgUrl}" class="viewer-image" alt="HEIC Image">`;
             const img = document.getElementById('viewerImage');
