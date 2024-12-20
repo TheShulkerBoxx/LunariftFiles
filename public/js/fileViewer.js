@@ -155,29 +155,22 @@ const FileViewer = {
         // Store viewable files list for navigation
         this.viewableFiles = viewable;
 
-        // Pre-fetch files (under 50MB) for instant viewing
-        // Process in batches to avoid overwhelming the connection
-        this.prefetchBatch(viewable.filter(f =>
+        // Pre-fetch all eligible files concurrently for maximum speed
+        const filesToPrefetch = viewable.filter(f =>
             !this.cache.has(f.id) &&
             !this.pendingFetches.has(f.id) &&
             f.size < 50 * 1024 * 1024
-        ));
-    },
+        );
 
-    /**
-     * Prefetch files in batches with priority support
-     */
-    async prefetchBatch(files, batchSize = 3) {
-        for (let i = 0; i < files.length; i += batchSize) {
-            // Sort batch to put priority file first
-            const batch = files.slice(i, i + batchSize).sort((a, b) => {
-                if (a.id === this.priorityFileId) return -1;
-                if (b.id === this.priorityFileId) return 1;
-                return 0;
-            });
+        // Sort to prioritize current file, then fetch all at once
+        filesToPrefetch.sort((a, b) => {
+            if (a.id === this.priorityFileId) return -1;
+            if (b.id === this.priorityFileId) return 1;
+            return 0;
+        });
 
-            await Promise.all(batch.map(file => this.prefetchFile(file)));
-        }
+        // Fetch all files concurrently
+        filesToPrefetch.forEach(file => this.prefetchFile(file));
     },
 
     /**
