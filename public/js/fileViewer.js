@@ -410,10 +410,12 @@ const FileViewer = {
 
         // --- VIDEO ---
         else if (['mp4', 'webm', 'mov', 'mkv'].includes(ext)) {
+            // MOV and MKV often use same codecs as MP4, so use mp4 MIME type for better browser support
+            const mimeType = ['mov', 'mkv', 'mp4'].includes(ext) ? 'video/mp4' : `video/${ext}`;
             content.innerHTML = `
                 <div class="viewer-video-wrapper">
                     <video id="viewerVideo" class="viewer-video">
-                        <source src="${url}" type="video/${ext === 'mov' ? 'quicktime' : ext}">
+                        <source src="${url}" type="${mimeType}">
                         Your browser does not support the video tag.
                     </video>
                     <div class="video-controls">
@@ -680,6 +682,39 @@ const FileViewer = {
         video.onloadedmetadata = () => {
             durationEl.textContent = formatTime(video.duration);
             video.play(); // Autoplay
+        };
+
+        // Handle video loading errors
+        video.onerror = () => {
+            const error = video.error;
+            let message = 'Failed to load video';
+            if (error) {
+                switch (error.code) {
+                    case MediaError.MEDIA_ERR_ABORTED:
+                        message = 'Video loading was aborted';
+                        break;
+                    case MediaError.MEDIA_ERR_NETWORK:
+                        message = 'Network error while loading video';
+                        break;
+                    case MediaError.MEDIA_ERR_DECODE:
+                        message = 'Video format not supported by browser';
+                        break;
+                    case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
+                        message = 'Video format not supported';
+                        break;
+                }
+            }
+            console.error('[FileViewer] Video error:', message, error);
+            this.showError(message);
+        };
+
+        // Handle stalled/waiting states
+        video.onwaiting = () => {
+            console.debug('[FileViewer] Video buffering...');
+        };
+
+        video.onstalled = () => {
+            console.debug('[FileViewer] Video stalled, retrying...');
         };
 
         // Volume
