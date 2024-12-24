@@ -267,6 +267,47 @@ const FileViewer = {
     },
 
     /**
+     * Load image - ensures file is fully fetched before displaying
+     */
+    async loadImage(file) {
+        // Check if already in cache with valid blob URL
+        const cached = this.cache.get(file.id);
+        if (cached && cached.url) {
+            return cached.url;
+        }
+
+        // Wait for pending fetch if in progress
+        if (this.pendingFetches.has(file.id)) {
+            while (this.pendingFetches.has(file.id)) {
+                await new Promise(r => setTimeout(r, 50));
+            }
+            const nowCached = this.cache.get(file.id);
+            if (nowCached && nowCached.url) {
+                return nowCached.url;
+            }
+        }
+
+        // Fetch the file directly
+        const url = API.getDownloadURL(file.id, true);
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        const blob = await response.blob();
+        const blobUrl = URL.createObjectURL(blob);
+
+        // Store in cache
+        this.cache.set(file.id, {
+            blob,
+            url: blobUrl,
+            timestamp: Date.now()
+        });
+
+        return blobUrl;
+    },
+
+    /**
      * Get cached blob for a file
      */
     getCachedBlob(fileId) {
@@ -402,10 +443,27 @@ const FileViewer = {
 
         // --- IMAGES ---
         if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'ico', 'bmp'].includes(ext)) {
-            content.innerHTML = `<img id="viewerImage" src="${url}" class="viewer-image" alt="${file.name}">`;
-            const img = document.getElementById('viewerImage');
-            img.onload = () => this.setupImageZoom();
-            img.onerror = () => this.showError('Failed to load image');
+            // Show loading state first
+            content.innerHTML = `
+                <div class="viewer-loading">
+                    <i class="fas fa-spinner fa-spin"></i>
+                    <p>Loading image...</p>
+                </div>
+            `;
+
+            // Try to get from cache or fetch
+            this.loadImage(file).then(imgUrl => {
+                content.innerHTML = `<img id="viewerImage" src="${imgUrl}" class="viewer-image" alt="${file.name}">`;
+                const img = document.getElementById('viewerImage');
+                img.onload = () => this.setupImageZoom();
+                img.onerror = (e) => {
+                    console.error('[FileViewer] Image load error:', file.name, e);
+                    this.showError('Failed to load image');
+                };
+            }).catch(err => {
+                console.error('[FileViewer] Image fetch error:', file.name, err);
+                this.showError('Failed to load image');
+            });
         }
 
         // --- VIDEO ---
