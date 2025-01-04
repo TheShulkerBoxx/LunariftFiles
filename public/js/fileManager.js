@@ -447,12 +447,149 @@ const FileManager = {
      * Bulk move selected items
      */
     async bulkMove() {
-        const newPath = await UI.showPrompt('Enter destination path:', AppState.currentPath);
+        const count = AppState.getSelectionCount();
+        if (count === 0) {
+            UI.showNotification('No items selected', 'info');
+            return;
+        }
 
-        if (!newPath) return;
+        // Show folder picker
+        const targetPath = await this.showFolderPicker('Move to...');
+        if (!targetPath) return;
 
-        // Note: Move operation not implemented in backend yet
-        UI.showNotification('Move operation not yet implemented', 'info');
+        try {
+            let moved = 0;
+
+            // Move files
+            for (const fileId of AppState.selection.files) {
+                const file = AppState.files.find(f => f.id === fileId);
+                if (file && file.path !== targetPath) {
+                    await API.moveItem(fileId, false, targetPath);
+                    moved++;
+                }
+            }
+
+            // Move folders
+            for (const folderPath of AppState.selection.folders) {
+                // Calculate new path - extract folder name and append to target
+                const folderName = folderPath.split('/').filter(p => p).pop();
+                const newPath = targetPath + folderName + '/';
+
+                if (folderPath !== newPath && !newPath.startsWith(folderPath)) {
+                    await API.moveItem(folderPath, true, newPath);
+                    moved++;
+                }
+            }
+
+            AppState.clearSelection();
+            UI.showNotification(`Moved ${moved} item(s) to ${targetPath}`, 'success');
+            await this.loadFiles();
+        } catch (error) {
+            console.error('Move failed:', error);
+            UI.showNotification('Failed to move items: ' + error.message, 'error');
+        }
+    },
+
+    /**
+     * Move a single item to a folder
+     */
+    async moveItemToFolder(id, isFolder, targetPath) {
+        try {
+            if (isFolder) {
+                // For folders, calculate new path
+                const folderName = id.split('/').filter(p => p).pop();
+                const newPath = targetPath + folderName + '/';
+
+                // Don't move into itself
+                if (newPath.startsWith(id)) {
+                    UI.showNotification("Cannot move folder into itself", 'error');
+                    return;
+                }
+
+                await API.moveItem(id, true, newPath);
+            } else {
+                // For files, just move to the target path
+                const file = AppState.files.find(f => f.id === id);
+                if (file && file.path !== targetPath) {
+                    await API.moveItem(id, false, targetPath);
+                }
+            }
+
+            UI.showNotification('Item moved', 'success');
+            await this.loadFiles();
+        } catch (error) {
+            console.error('Move failed:', error);
+            UI.showNotification('Failed to move item: ' + error.message, 'error');
+        }
+    },
+
+    /**
+     * Show folder picker dialog
+     */
+    async showFolderPicker(title = 'Select folder') {
+        return new Promise((resolve) => {
+            // Get all folders
+            const allFolders = ['/'];
+            AppState.folders.forEach(f => allFolders.push(f));
+
+            // Also add folders from file paths
+            AppState.files.forEach(f => {
+                if (!allFolders.includes(f.path)) {
+                    allFolders.push(f.path);
+                }
+            });
+
+            // Sort folders
+            allFolders.sort();
+
+            // Create modal
+            const modal = document.createElement('div');
+            modal.className = 'modal active';
+            modal.id = 'folderPickerModal';
+
+            const folderOptions = allFolders.map(f => `
+                <div class="folder-option" data-path="${f}">
+                    <i class="fas fa-folder text-yellow-500"></i>
+                    <span>${f === '/' ? 'Root (/)' : f}</span>
+                </div>
+            `).join('');
+
+            modal.innerHTML = `
+                <div class="modal-content folder-picker-modal">
+                    <h3>${title}</h3>
+                    <div class="folder-list">
+                        ${folderOptions}
+                    </div>
+                    <div class="modal-buttons">
+                        <button class="btn btn-secondary" id="folderPickerCancel">Cancel</button>
+                    </div>
+                </div>
+            `;
+
+            document.body.appendChild(modal);
+
+            // Handle folder selection
+            modal.querySelectorAll('.folder-option').forEach(opt => {
+                opt.onclick = () => {
+                    modal.remove();
+                    resolve(opt.dataset.path);
+                };
+            });
+
+            // Handle cancel
+            modal.querySelector('#folderPickerCancel').onclick = () => {
+                modal.remove();
+                resolve(null);
+            };
+
+            // Close on backdrop click
+            modal.onclick = (e) => {
+                if (e.target === modal) {
+                    modal.remove();
+                    resolve(null);
+                }
+            };
+        });
     },
 
     /**
@@ -675,15 +812,21 @@ const FileManager = {
     },
 
     /**
-     * Toggle item selection
+     * Toggle item selection (with shift-select support)
      */
     toggleSelection(id, isFolder, event) {
         event.stopPropagation();
 
-        if (isFolder) {
-            AppState.toggleFolderSelection(id);
+        if (event.shiftKey && AppState.selection.lastSelected) {
+            // Shift+click: select range
+            AppState.selectRange(id, isFolder);
         } else {
-            AppState.toggleFileSelection(id);
+            // Normal click: toggle single item
+            if (isFolder) {
+                AppState.toggleFolderSelection(id);
+            } else {
+                AppState.toggleFileSelection(id);
+            }
         }
 
         this.render();
@@ -818,6 +961,9 @@ const FileManager = {
     createFolderRow(folderName, fullPath, isSelected, hasPending) {
         const tr = document.createElement('tr');
         tr.className = 'file-row' + (isSelected ? ' selected' : '');
+        tr.draggable = true;
+        tr.dataset.itemId = fullPath;
+        tr.dataset.isFolder = 'true';
 
         tr.innerHTML = `
             <td class="col-checkbox">
@@ -868,6 +1014,59 @@ const FileManager = {
             this.deleteItem(fullPath, true);
         };
 
+        // Drag start - for moving this folder
+        tr.ondragstart = (e) => {
+            e.dataTransfer.setData('text/plain', JSON.stringify({
+                id: fullPath,
+                isFolder: true,
+                name: folderName
+            }));
+            e.dataTransfer.effectAllowed = 'move';
+            tr.classList.add('dragging');
+        };
+
+        tr.ondragend = () => {
+            tr.classList.remove('dragging');
+        };
+
+        // Drop target - for receiving items
+        tr.ondragover = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            // Only allow drop if not dragging onto itself
+            const data = e.dataTransfer.types.includes('text/plain');
+            if (data) {
+                e.dataTransfer.dropEffect = 'move';
+                tr.classList.add('drop-target');
+            }
+        };
+
+        tr.ondragleave = (e) => {
+            e.preventDefault();
+            tr.classList.remove('drop-target');
+        };
+
+        tr.ondrop = async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            tr.classList.remove('drop-target');
+
+            try {
+                const data = JSON.parse(e.dataTransfer.getData('text/plain'));
+
+                // Don't drop onto itself or into a subfolder of itself
+                if (data.id === fullPath) return;
+                if (data.isFolder && fullPath.startsWith(data.id)) {
+                    UI.showNotification("Cannot move folder into itself", 'error');
+                    return;
+                }
+
+                await this.moveItemToFolder(data.id, data.isFolder, fullPath);
+            } catch (err) {
+                console.error('Drop error:', err);
+            }
+        };
+
         return tr;
     },
 
@@ -878,6 +1077,9 @@ const FileManager = {
         const tr = document.createElement('tr');
         tr.className = 'file-row' + (isSelected ? ' selected' : '') +
             (file.status === 'PENDING' ? ' pending' : '');
+        tr.draggable = true;
+        tr.dataset.itemId = file.id;
+        tr.dataset.isFolder = 'false';
 
         const isPending = file.status === 'PENDING';
 
@@ -960,6 +1162,21 @@ const FileManager = {
         tr.querySelector('.delete-btn').onclick = (e) => {
             e.stopPropagation();
             this.deleteItem(file.id, false);
+        };
+
+        // Drag start - for moving this file
+        tr.ondragstart = (e) => {
+            e.dataTransfer.setData('text/plain', JSON.stringify({
+                id: file.id,
+                isFolder: false,
+                name: file.name
+            }));
+            e.dataTransfer.effectAllowed = 'move';
+            tr.classList.add('dragging');
+        };
+
+        tr.ondragend = () => {
+            tr.classList.remove('dragging');
         };
 
         return tr;

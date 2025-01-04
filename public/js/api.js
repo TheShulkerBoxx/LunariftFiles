@@ -358,5 +358,21 @@ const API = {
     previewFile(fileId) {
         // Open in new tab with authentication header via fetch
         window.open(this.getDownloadURL(fileId, true), '_blank');
+    },
+
+    /**
+     * Move a file or folder to a new path
+     * @param {string} id - File ID or folder path
+     * @param {boolean} isFolder - Whether the item is a folder
+     * @param {string} newPath - The destination path
+     */
+    async moveItem(id, isFolder, newPath) {
+        const response = await this.request('/api/move', {
+            method: 'POST',
+            body: JSON.stringify({ id, isFolder, newPath })
+        });
+
+        if (!response) return null;
+        return await response.json();
     }
 };
