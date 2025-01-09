@@ -307,6 +307,17 @@ const UploadManager = {
             upload.progress = 100;
             this.updateUI();
 
+            // Auto-remove completed item after 10 seconds
+            setTimeout(() => {
+                if (session.files.has(item.id)) {
+                    const fileUpload = session.files.get(item.id);
+                    if (fileUpload.status === 'complete') {
+                        session.files.delete(item.id);
+                        this.updateUI();
+                    }
+                }
+            }, 10000);
+
             return result;
         } catch (error) {
             if (session.cancelled) {

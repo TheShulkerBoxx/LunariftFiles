@@ -155,11 +155,11 @@ const FileViewer = {
         // Store viewable files list for navigation
         this.viewableFiles = viewable;
 
-        // Pre-fetch all eligible files concurrently for maximum speed
+        // Pre-fetch eligible files (max 20MB, limit to first 10)
         const filesToPrefetch = viewable.filter(f =>
             !this.cache.has(f.id) &&
             !this.pendingFetches.has(f.id) &&
-            f.size < 50 * 1024 * 1024
+            f.size < 20 * 1024 * 1024
         );
 
         // Sort to prioritize current file, then fetch all at once
@@ -169,8 +169,11 @@ const FileViewer = {
             return 0;
         });
 
+        // Limit to first 10 files
+        const limitedPrefetch = filesToPrefetch.slice(0, 10);
+
         // Fetch all files concurrently
-        filesToPrefetch.forEach(file => this.prefetchFile(file));
+        limitedPrefetch.forEach(file => this.prefetchFile(file));
     },
 
     /**
@@ -364,10 +367,10 @@ const FileViewer = {
         const prevFile = this.viewableFiles[this.currentIndex - 1];
         const nextFile = this.viewableFiles[this.currentIndex + 1];
 
-        if (nextFile && !this.cache.has(nextFile.id) && nextFile.size < 50 * 1024 * 1024) {
+        if (nextFile && !this.cache.has(nextFile.id) && nextFile.size < 20 * 1024 * 1024) {
             this.prefetchFile(nextFile);
         }
-        if (prevFile && !this.cache.has(prevFile.id) && prevFile.size < 50 * 1024 * 1024) {
+        if (prevFile && !this.cache.has(prevFile.id) && prevFile.size < 20 * 1024 * 1024) {
             this.prefetchFile(prevFile);
         }
     },
